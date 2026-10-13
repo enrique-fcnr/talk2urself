@@ -1,0 +1,303 @@
+import Fastify from 'fastify';
+import websocket from '@fastify/websocket';
+import { maxRecordingBytes, parseAudioInput, parseClientCommand, type AudioInput, type ConversationState, type ServerEvent, type Usage } from '../../../shared/protocol.ts';
+import { extractGestures } from '../../../shared/gestures.ts';
+import { openaiTranscriptionModel, type Message, type VoiceProvider } from './voice.ts';
+import { randomUUID } from 'node:crypto';
+import type { MemoryService } from './memory.ts';
+import type { WebSocket } from 'ws';
+import { emitDiagnostic, type DiagnosticSink, type DiagnosticStage, type MemoryDiagnosticRecord } from './memory-diagnostics.ts';
+import { createLanguageWorker } from './language-worker.ts';
+
+export async function createApp(options: { voice?: VoiceProvider; memory?: MemoryService; onUsage?: (record: Record<string, string | number>) => void; onMemoryDiagnostic?: (record: MemoryDiagnosticRecord) => void } = {}) {
+  const app = Fastify({ logger: false });
+  await app.register(websocket, { options: { maxPayload: maxRecordingBytes } });
+  const viewers = new Set<WebSocket>();
+  const notifyMemories = () => { for (const viewer of viewers) if (viewer.readyState === 1) viewer.send(JSON.stringify({ type: 'memory-sync' })); };
+  const languageWorker = options.voice?.observeLanguage && options.memory?.saveLanguage
+    ? createLanguageWorker(options.voice, options.memory, notifyMemories) : undefined;
+  app.addHook('onClose', async () => { await languageWorker?.close(); });
+  const localOrigin = (origin: string | undefined) => !origin || ['http://127.0.0.1:5173', 'http://localhost:5173'].includes(origin);
+  app.get('/api/memory/vectors', async (request, reply) => {
+    reply.header('Cache-Control', 'no-store');
+    if (!localOrigin(request.headers.origin)) return reply.code(403).send({ error: 'Origem não permitida.' });
+    if (!options.memory) return { enabled: false };
+    try { return { enabled: true, ...await options.memory.vectors(AbortSignal.timeout(20_000)) }; }
+    catch { return reply.code(503).send({ error: 'Não foi possível carregar o mapa de memórias.' }); }
+  });
+  // Canal de observação: não recebe áudio, não escreve no banco nem chama modelos.
+  app.get('/ws/memories', { websocket: true, preValidation: async (request, reply) => {
+    if (!localOrigin(request.headers.origin)) await reply.code(403).send({ error: 'Origem não permitida.' });
+  } }, (socket) => {
+    viewers.add(socket);
+    socket.send(JSON.stringify({ type: 'memory-sync' }));
+    socket.on('close', () => viewers.delete(socket));
+    socket.on('error', () => viewers.delete(socket));
+  });
+  app.addHook('onClose', async () => { for (const socket of viewers) socket.close(); viewers.clear(); });
+
+  app.get('/api/health', async () => ({ ok: true, mode: options.voice ? 'voice' : 'demo', model: options.voice?.model ?? null,
+    ...(options.memory ? { memory: 'configured' } : {}) }));
+  app.get('/api/memory', async (request, reply) => {
+    const origin = request.headers.origin;
+    if (origin && !['http://127.0.0.1:5173', 'http://localhost:5173'].includes(origin)) return reply.code(403).send({ error: 'Origem não permitida.' });
+    if (!options.memory) return { enabled: false };
+    try {
+      const context = await options.memory.inspect(AbortSignal.timeout(20_000));
+      return { enabled: true, summary: context.summary, profile: context.profile, gaps: context.gaps, version: context.version, categories: context.categories };
+    } catch { return reply.code(503).send({ error: 'Não foi possível carregar suas memórias.' }); }
+  });
+
+  app.get('/ws', {
+    websocket: true,
+    preValidation: async (request, reply) => {
+      const origin = request.headers.origin;
+      if (origin && !['http://127.0.0.1:5173', 'http://localhost:5173'].includes(origin)) {
+        await reply.code(403).send({ error: 'Origem não permitida na prévia local.' });
+      }
+    },
+  }, (socket) => {
+    // A conexão controla o áudio. Quando configurado, o banco guarda a continuidade do usuário local.
+    let state: ConversationState = 'idle';
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let pendingAudio: AudioInput | null = null;
+    let controller: AbortController | undefined;
+    let generation = 0;
+    const history: Message[] = [];
+    let introduced = false;
+    let openingText = '';
+    const usage: Usage = { turns: 0, sttSeconds: 0, ttsCharacters: 0, inputTokens: 0, outputTokens: 0, cachedTokens: 0 };
+
+    function send(event: ServerEvent) {
+      if (socket.readyState === 1) socket.send(JSON.stringify(event));
+    }
+    function changeState(next: ConversationState, text = '') {
+      state = next;
+      send({ type: 'state', state, text });
+    }
+    function clearTimer() {
+      if (timer) clearTimeout(timer);
+      timer = undefined;
+    }
+    function cancel() {
+      generation++;
+      controller?.abort();
+      controller = undefined;
+      pendingAudio = null;
+      clearTimer();
+    }
+    function recordUsage(service: string, metrics: Record<string, string | number>, started: number) {
+      send({ type: 'usage', usage: { ...usage } });
+      options.onUsage?.({ service, model: service.startsWith('llm') ? options.voice!.model : service === 'stt' ? openaiTranscriptionModel : 'sonic-3.6', elapsedMs: Date.now() - started, ...metrics });
+    }
+    async function introduce() {
+      const voice = options.voice!;
+      const active = new AbortController();
+      const current = ++generation;
+      controller = active;
+      const valid = () => current === generation && !active.signal.aborted && socket.readyState === 1;
+      changeState('thinking');
+      try {
+        const context = options.memory ? await options.memory.inspect(active.signal) : undefined;
+        if (!valid()) return;
+        let started = Date.now();
+        const answer = await voice.opening!(context, active.signal);
+        usage.inputTokens += answer.inputTokens;
+        usage.outputTokens += answer.outputTokens;
+        usage.cachedTokens += answer.cachedTokens;
+        if (answer.inputTokens || answer.outputTokens) recordUsage('llm', { inputTokens: answer.inputTokens, outputTokens: answer.outputTokens, cachedTokens: answer.cachedTokens }, started);
+        if (!valid()) return;
+        // Gesture marks become animation cues and never reach the voice, the screen or the history.
+        const spoken = extractGestures(answer.text);
+        started = Date.now();
+        const speech = voice.speakTimed ? await voice.speakTimed(spoken.text, active.signal) : { audio: await voice.speak(spoken.text, active.signal), phonemes: [] };
+        if (!valid()) return;
+        usage.ttsCharacters += Array.from(spoken.text).length;
+        recordUsage('tts', { characters: Array.from(spoken.text).length, phonemes: speech.phonemes.length }, started);
+        if (!valid()) return;
+        // A abertura não inventa uma fala do usuário e não grava fatos no banco.
+        openingText = spoken.text;
+        introduced = true;
+        changeState('speaking', spoken.text);
+        send({ type: 'audio-output', mime: 'audio/wav', phonemes: speech.phonemes, gestures: spoken.gestures });
+        socket.send(speech.audio, { binary: true });
+        timer = setTimeout(() => { if (valid()) changeState('listening', spoken.text); }, 180_000);
+      } catch {
+        if (!valid()) return;
+        send({ type: 'error', message: 'Não foi possível concluir a abertura. Você pode começar a falar ou tentar despertar novamente.' });
+        changeState('listening');
+      } finally { if (controller === active) controller = undefined; }
+    }
+    async function respond(audio: Buffer, input: AudioInput) {
+      const releaseMemory = options.memory?.acquire();
+      if (options.memory && !releaseMemory) {
+        send({ type: 'error', message: 'Aguarde a outra conversa terminar antes de enviar uma nova fala.' });
+        return;
+      }
+      const voice = options.voice!;
+      const current = ++generation;
+      const active = new AbortController();
+      const turnId = randomUUID();
+      let phase: DiagnosticStage = 'transcription';
+      let phaseFailed = false;
+      const diagnostic: DiagnosticSink | undefined = options.memory ? (event) => {
+        if (event.stage !== 'turn') {
+          phase = event.stage;
+          phaseFailed = event.outcome === 'failed' || event.outcome === 'cancelled';
+        }
+        try { options.onMemoryDiagnostic?.({ ...event, turnId }); } catch { /* Logging must not stop a conversation. */ }
+      } : undefined;
+      let committed = false;
+      emitDiagnostic(diagnostic, { stage: 'turn', outcome: 'started' });
+      controller = active;
+      const valid = () => current === generation && !active.signal.aborted && socket.readyState === 1;
+      changeState('thinking');
+      try {
+        let started = Date.now();
+        const transcript = await voice.transcribe(audio, input.mime, active.signal);
+        const seconds = transcript.seconds || input.seconds;
+        usage.sttSeconds += seconds;
+        recordUsage('stt', { seconds, secondsSource: transcript.seconds ? 'provider' : 'recording' }, started);
+        if (!valid()) return;
+        if (!transcript.text) {
+          // The provider answered; the recording had no recognizable speech (often a muted or very quiet microphone).
+          emitDiagnostic(diagnostic, { stage: 'transcription', outcome: 'failed', reason: 'empty_transcript' });
+          throw new Error('Não identificamos uma fala. Grave uma pergunta curta e tente novamente.');
+        }
+        send({ type: 'transcript', text: transcript.text });
+        const message: Message = { role: 'user', content: transcript.text };
+        phase = 'context';
+        const context = options.memory ? await options.memory.load(transcript.text, active.signal) : undefined;
+        if (!valid()) return;
+        started = Date.now();
+        phase = 'proposal';
+        const answer = await voice.reply([...(context?.recent ?? history),
+          ...(openingText ? [{ role: 'assistant' as const, content: openingText }] : []), message], active.signal, context, diagnostic);
+        usage.inputTokens += answer.inputTokens;
+        usage.outputTokens += answer.outputTokens;
+        usage.cachedTokens += answer.cachedTokens;
+        recordUsage('llm', { inputTokens: answer.inputTokens, outputTokens: answer.outputTokens, cachedTokens: answer.cachedTokens }, started);
+        if (!valid()) return;
+        const spoken = extractGestures(answer.text);
+        started = Date.now();
+        phase = 'speech';
+        const speech = voice.speakTimed ? await voice.speakTimed(spoken.text, active.signal) : { audio: await voice.speak(spoken.text, active.signal), phonemes: [] };
+        if (!valid()) return;
+        usage.ttsCharacters += Array.from(spoken.text).length;
+        usage.turns++;
+        recordUsage('tts', { characters: Array.from(spoken.text).length, phonemes: speech.phonemes.length }, started);
+        if (!valid()) return;
+        if (options.memory && context) {
+          if (!answer.learning) throw new Error('Memória: a IA não retornou os dados de continuidade.');
+          phase = 'preparation';
+          await options.memory.save(turnId, message.content, spoken.text, context, answer.learning, active.signal, diagnostic);
+          committed = true;
+          emitDiagnostic(diagnostic, { stage: 'turn', outcome: 'completed' });
+          // Só sinaliza depois do commit confirmado. O painel relê o estado real.
+          notifyMemories();
+          // Only committed speech is eligible. The worker never waits on playback,
+          // changes socket state, or holds the foreground conversation's lock.
+          languageWorker?.schedule({ turnId, context: { ...context, version: context.version + 1,
+            summary: answer.learning.summary, recent: [...context.recent, message, { role: 'assistant', content: spoken.text }] },
+            diagnostic: (event) => { try { options.onMemoryDiagnostic?.({ ...event, turnId }); } catch { /* best effort */ } },
+            onUsage: (metrics) => {
+              usage.inputTokens += metrics.inputTokens; usage.outputTokens += metrics.outputTokens; usage.cachedTokens += metrics.cachedTokens;
+              recordUsage('llm-language', { inputTokens: metrics.inputTokens, outputTokens: metrics.outputTokens, cachedTokens: metrics.cachedTokens }, Date.now() - metrics.elapsedMs);
+            } });
+          if (!valid()) return;
+        }
+        // A versão sem banco mantém seu contexto temporário por conexão.
+        history.push(message, { role: 'assistant', content: spoken.text });
+        openingText = '';
+        while (history.length > 20 || (history.length > 2 && history.reduce((size, item) => size + item.content.length, 0) > 12000)) history.splice(0, 2);
+        changeState('speaking', spoken.text);
+        send({ type: 'audio-output', mime: 'audio/wav', phonemes: speech.phonemes, gestures: spoken.gestures });
+        socket.send(speech.audio, { binary: true });
+        // Recupera a conversa caso a aba deixe de confirmar o fim da reprodução.
+        timer = setTimeout(() => changeState('listening'), 180_000);
+      } catch (error) {
+        if (valid()) {
+          if (!phaseFailed) emitDiagnostic(diagnostic, { stage: phase, outcome: 'failed', reason: 'service_error' });
+          emitDiagnostic(diagnostic, { stage: 'turn', outcome: 'failed' });
+        }
+        if (!valid()) return;
+        const message = error instanceof Error && /^(Memória:|Transcrição OpenAI:|OpenAI:|Voz Cartesia:|A transcrição |A IA |A voz |Não identificamos)/.test(error.message)
+          ? error.message : 'Não foi possível concluir a conversa. Confira sua conexão e tente novamente.';
+        send({ type: 'error', message });
+        changeState('listening');
+      } finally {
+        if (!committed && !valid()) emitDiagnostic(diagnostic, { stage: 'turn', outcome: 'cancelled' });
+        releaseMemory?.();
+        if (controller === active) controller = undefined;
+      }
+    }
+
+    socket.on('message', (payload, isBinary) => {
+      if (isBinary) {
+        const input = pendingAudio;
+        pendingAudio = null;
+        if (!options.voice || state !== 'listening' || !input) {
+          send({ type: 'error', message: 'O áudio chegou fora do turno de fala.' });
+          return;
+        }
+        clearTimer();
+        const audio = Buffer.isBuffer(payload) ? payload : Array.isArray(payload) ? Buffer.concat(payload) : Buffer.from(payload);
+        if (audio.length === 0 || audio.length > maxRecordingBytes) {
+          send({ type: 'error', message: 'A gravação está vazia ou excede o limite.' });
+          return;
+        }
+        void respond(audio, input);
+        return;
+      }
+      if (payload.toString().length > 4096) {
+        send({ type: 'error', message: 'Mensagem muito grande.' });
+        return;
+      }
+      const input = parseAudioInput(payload.toString());
+      if (input) {
+        if (!options.voice || state !== 'listening' || pendingAudio) {
+          send({ type: 'error', message: 'Aguarde o turno atual terminar.' });
+          return;
+        }
+        pendingAudio = input;
+        timer = setTimeout(() => { pendingAudio = null; send({ type: 'error', message: 'A gravação não chegou. Tente novamente.' }); }, 10_000);
+        return;
+      }
+      const command = parseClientCommand(payload.toString());
+      if (!command) {
+        send({ type: 'error', message: 'Comando não reconhecido.' });
+        return;
+      }
+      if (command === 'reset') {
+        cancel();
+        changeState('idle');
+        return;
+      }
+      if (command === 'start' && state === 'idle') {
+        if (options.voice?.opening && !introduced) void introduce();
+        else changeState('listening');
+        return;
+      }
+      if (command === 'playback-ended' && options.voice && state === 'speaking') {
+        clearTimer();
+        changeState('listening', openingText);
+        return;
+      }
+      if (command === 'submit-demo' && !options.voice && state === 'listening') {
+        changeState('thinking');
+        // Tempos e texto demonstrativos: não há chamadas de IA ou áudio aqui.
+        timer = setTimeout(() => {
+          changeState('speaking', 'Qual é a menor parte dessa ideia que você consegue testar hoje?');
+          timer = setTimeout(() => changeState('listening'), 2600);
+        }, 900);
+        return;
+      }
+      send({ type: 'error', message: 'Aguarde o turno atual terminar.' });
+    });
+    socket.on('close', cancel);
+    socket.on('error', cancel);
+    changeState('idle');
+  });
+
+  return app;
+}
