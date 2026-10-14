@@ -25,6 +25,14 @@ export async function createApp(options: { voice?: VoiceProvider; memory?: Memor
     try { return { enabled: true, ...await options.memory.vectors(AbortSignal.timeout(20_000)) }; }
     catch { return reply.code(503).send({ error: 'Não foi possível carregar o mapa de memórias.' }); }
   });
+  // How many facts Kelly holds; the avatar's brain glows brighter as it grows.
+  app.get('/api/memory/count', async (request, reply) => {
+    reply.header('Cache-Control', 'no-store');
+    if (!localOrigin(request.headers.origin)) return reply.code(403).send({ error: 'Origem não permitida.' });
+    if (!options.memory?.count) return { enabled: false };
+    try { return { enabled: true, count: await options.memory.count(AbortSignal.timeout(10_000)) }; }
+    catch { return reply.code(503).send({ error: 'Não foi possível contar as memórias.' }); }
+  });
   // Canal de observação: não recebe áudio, não escreve no banco nem chama modelos.
   app.get('/ws/memories', { websocket: true, preValidation: async (request, reply) => {
     if (!localOrigin(request.headers.origin)) await reply.code(403).send({ error: 'Origem não permitida.' });

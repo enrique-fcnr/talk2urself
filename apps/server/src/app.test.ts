@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { setTimeout as delay } from 'node:timers/promises';
 import { createApp } from './app.ts';
+import type { MemoryService } from './memory.ts';
 import { parseServerEvent, type ClientCommand, type ServerEvent } from '../../../shared/protocol.ts';
 
 class Channel {
@@ -111,4 +112,13 @@ test('mensagens inválidas preservam a conexão e origens externas são rejeitad
   assert.deepEqual(health.json(), { ok: true, mode: 'demo', model: null });
   const rejected = await app.inject({ method: 'GET', url: '/ws', headers: { origin: 'https://untrusted.example' } });
   assert.equal(rejected.statusCode, 403);
+});
+
+test('contagem de memórias: desligada sem banco e lida do serviço com banco', async (t) => {
+  const plain = await createApp(); t.after(() => plain.close());
+  assert.deepEqual((await plain.inject({ method: 'GET', url: '/api/memory/count' })).json(), { enabled: false });
+  const memory = { count: async () => 7 } as unknown as MemoryService;
+  const withMemory = await createApp({ memory }); t.after(() => withMemory.close());
+  assert.deepEqual((await withMemory.inject({ method: 'GET', url: '/api/memory/count' })).json(), { enabled: true, count: 7 });
+  assert.equal((await withMemory.inject({ method: 'GET', url: '/api/memory/count', headers: { origin: 'https://evil.example' } })).statusCode, 403);
 });

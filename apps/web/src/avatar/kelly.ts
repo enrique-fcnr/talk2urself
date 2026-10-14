@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { MeshoptDecoder } from 'three/examples/jsm/libs/meshopt_decoder.module.js';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
+import { createCrown, type Crown } from './crown';
 import { mouthMorphs, mouthPoseAt, type AvatarPlayback } from '../../../../shared/lip-sync';
 import type { ConversationState } from '../../../../shared/protocol';
 import type { SpeechGesture } from '../../../../shared/gestures';
@@ -19,6 +20,44 @@ const glanceEvery = () => 7+Math.random()*7;
 const eyeLevel = .5;
 // Lash line along the upper eyelids: a cool neon tone, bright enough to read on the black lids.
 const lidGlowColor = 0x9fe6ff, lidGlowStrength = 2;
+// Visual presets, switchable with ?look=<name> in the URL (and kellyLook(name) in development).
+// neon: the black obsidian mirror. halo: a satin bust lit from within, white-blue at the head fading to deep blue
+// at the shoulders. violet: velvety deep-purple skin in soft lilac light, with a lilac rim from behind.
+// Gradient heights are in world units of the 1.9-tall bust (head top .95, eyes .5, shoulders -.6).
+type Look = { color: number; metalness: number; roughness: number; clearcoat: number; clearcoatRoughness: number; iridescence: number;
+  envMapIntensity: number; exposure: number; lights: number; eyes: number;
+  // lightTint replaces the lights' own colours (null keeps them); edge pulls grazing surfaces toward the low colour.
+  lightTint: number | null; edge: number;
+  // ACES suits the neon look but shifts saturated blue toward purple; Neutral keeps colours as authored.
+  toneMapping: THREE.ToneMapping;
+  gradient: { low: number; high: number; from: number; to: number; glow: number; tint: number; eyeCut: number };
+  // Rim fire: glow where the surface turns away from the camera (power sharpens it to the silhouette), coloured by a
+  // slowly drifting 3D noise between two colours; scale sets the size of the flames, flicker how fast they move.
+  // variation 0 gives a smooth, even rim; 1 breaks it into noise-driven strands.
+  rim: { strength: number; power: number; colorA: number; colorB: number; scale: number; flicker: number; variation: number };
+  // Velvet: the physical material's sheen, a soft glow on surfaces seen edge-on.
+  sheen: number; sheenColor: number;
+  // crown adds the violet extras (disc, opened skull with a pulsing brain, orbiting spheres); lidColor tints the lash line.
+  crown: boolean; lidColor: number };
+const noRim = { strength: 0, power: 1, colorA: 0, colorB: 0, scale: 1, flicker: 0, variation: 0 };
+const looks: Record<string, Look> = {
+  neon: { color: 0x141c36, metalness: .94, roughness: .18, clearcoat: 1, clearcoatRoughness: .09, iridescence: .65, envMapIntensity: 3.4,
+    exposure: 1.25, lights: 1, eyes: 0xffffff, lightTint: null, edge: 0, toneMapping: THREE.ACESFilmicToneMapping, gradient: { low: 0, high: 0, from: 0, to: 1, glow: 0, tint: 0, eyeCut: 0 }, rim: noRim, sheen: 0, sheenColor: 0, crown: false, lidColor: lidGlowColor },
+  halo: { color: 0xffffff, metalness: 0, roughness: .45, clearcoat: .25, clearcoatRoughness: .35, iridescence: 0, envMapIntensity: 0,
+    exposure: 1.1, lights: .4, eyes: 0x2a5cff, lightTint: 0xdce8ff, edge: 1, toneMapping: THREE.NeutralToneMapping, gradient: { low: 0x0a1c9e, high: 0xeef5ff, from: -.3, to: .3, glow: 1, tint: .8, eyeCut: .85 }, rim: noRim, sheen: 0, sheenColor: 0, crown: false, lidColor: lidGlowColor },
+  violet: { color: 0x22123a, metalness: 0, roughness: .75, clearcoat: 0, clearcoatRoughness: .5, iridescence: 0, envMapIntensity: 0,
+    exposure: 1.1, lights: .55, eyes: 0xffffff, lightTint: 0xc3a6ff, edge: 0, toneMapping: THREE.NeutralToneMapping,
+    gradient: { low: 0, high: 0, from: 0, to: 1, glow: 0, tint: 0, eyeCut: 0 },
+    rim: { strength: .9, power: 3.2, colorA: 0xa070f0, colorB: 0xa070f0, scale: 1, flicker: 0, variation: 0 }, sheen: .8, sheenColor: 0x8a5ce8, crown: true, lidColor: 0xffffff },
+};
+// Studio lights in the reflection environment: [x, y, width, height, colour] in equirectangular fractions.
+const studioLights: readonly (readonly [number, number, number, number, string])[] = [
+  [.83, .3, .1, .16, '#eef6ff'],     // key softbox: in front, above, to her right
+  [.67, .4, .06, .12, '#7f96d8'],    // dim fill softbox on her left
+  [.5, .05, .5, .025, '#c9d8ff'],    // overhead light bar
+  [.06, .36, .012, .42, '#16e4ff'],  // cyan rim strip, behind on her right
+  [.42, .36, .012, .42, '#ff2fae'],  // magenta rim strip, behind on her left
+];
 // Mouth interior: pale satin teeth, deep rose tongue and gums, each with a faint glow so they read inside the dark mouth.
 const mouthColors = { teeth: 0xd9deee, gums: 0x6e2443, tongue: 0x9a3463 };
 const mouthGlow = { teeth: .14, gums: .1, tongue: .16 };
@@ -41,6 +80,8 @@ type ViewOptions = {
   getPlayback: () => AvatarPlayback | null;
   getState: () => ConversationState;
   getRecording?: () => boolean;
+  // Page theme: on a light page the violet scene sits in a dark portal so its glow keeps its contrast.
+  getTheme?: () => 'light' | 'dark';
   // Pixels from the top of the view that page content covers; the head stays below them.
   getHeadroom?: () => number;
   loadModel?: (signal: AbortSignal) => Promise<ArrayBuffer>;
@@ -52,41 +93,56 @@ type ViewOptions = {
 export function mountKelly(host: HTMLElement, options: ViewOptions) {
   const controller = new AbortController();
   const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
-  renderer.setPixelRatio(Math.min(devicePixelRatio, 1.5)); renderer.toneMapping = THREE.ACESFilmicToneMapping; renderer.toneMappingExposure = 1.25;
-  renderer.domElement.setAttribute('aria-hidden', 'true'); host.append(renderer.domElement);
+  // Render above the screen's pixel density, up to 2.5x: supersampling smooths edges and the mirror-like highlights.
+  // If the machine cannot keep ~45 fps, the draw loop steps it down instead of stuttering.
+  let pixelRatio=Math.min(2.5,Math.max(1,devicePixelRatio)*1.75), frameMs=16, sinceRatioChange=0;
+  const lowestRatio=Math.max(1,Math.min(devicePixelRatio,2)*.75);
+  renderer.setPixelRatio(pixelRatio); renderer.toneMapping = THREE.ACESFilmicToneMapping; renderer.toneMappingExposure = 1.25;
+  renderer.localClippingEnabled = true; renderer.domElement.setAttribute('aria-hidden', 'true'); host.append(renderer.domElement);
   const scene = new THREE.Scene(), camera = new THREE.PerspectiveCamera(35, 1, .01, 100);
   const controls = options.interactive ? new OrbitControls(camera, renderer.domElement) : undefined;
   if (controls) { controls.enableDamping = true; controls.enablePan = false; controls.minPolarAngle = Math.PI * .27; controls.maxPolarAngle = Math.PI * .69; }
-  const canvas = document.createElement('canvas'); canvas.width = 1024; canvas.height = 512;
+  // Reflection environment. On a mirror-like surface, sharpness is read from the reflections, so besides the neon
+  // gradient that gives Kelly her colour, the studio has hard-edged lights (softboxes, rim strips, an overhead bar)
+  // that become crisp highlights. Equirectangular layout: x = direction around her (0.75 is in front of her face,
+  // 0.25 behind, 0.5 her left side, 0/1 her right), y = up (top) to down (bottom).
+  const W = 2048, Hgt = 1024, canvas = document.createElement('canvas'); canvas.width = W; canvas.height = Hgt;
   const ctx = canvas.getContext('2d')!;
-  ctx.fillStyle = '#02040d'; ctx.fillRect(0, 0, 1024, 512);
-  const gradient = ctx.createLinearGradient(0, 0, 1024, 0);
+  ctx.fillStyle = '#02040d'; ctx.fillRect(0, 0, W, Hgt);
+  const gradient = ctx.createLinearGradient(0, 0, W, 0);
   for (const [offset, color] of [[0,'#030718'], [.12,'#286aff'], [.25,'#03efff'], [.37,'#ff147e'], [.47,'#ffbf42'], [.54,'#ff6830'], [.63,'#ff28c8'], [.76,'#424dff'], [.87,'#08e6ff'], [1,'#030718']] as const) gradient.addColorStop(offset, color);
-  ctx.fillStyle = gradient; ctx.fillRect(0,0,1024,512);
+  ctx.fillStyle = gradient; ctx.fillRect(0,0,W,Hgt);
   // The reference has luminous colour around the brow and a dark lower face.
   // Fade the coloured environment vertically instead of covering the full bust.
-  const colourMask = ctx.createLinearGradient(0,0,0,512);
+  const colourMask = ctx.createLinearGradient(0,0,0,Hgt);
   for (const [offset,color] of [[0,'#040404'],[.13,'#121212'],[.27,'#ffffff'],[.4,'#ffffff'],[.52,'#808080'],[.66,'#060606'],[1,'#020202']] as const) colourMask.addColorStop(offset,color);
-  ctx.globalCompositeOperation='multiply'; ctx.fillStyle=colourMask; ctx.fillRect(0,0,1024,512);
-  const softbox = ctx.createLinearGradient(0,0,0,512);
-  for (const [offset,color] of [[0,'#000000'],[.09,'#141a35'],[.15,'#070b18'],[.3,'#000000'],[1,'#000000']] as const) softbox.addColorStop(offset,color);
-  ctx.globalCompositeOperation='screen'; ctx.fillStyle=softbox; ctx.fillRect(0,0,1024,512);
+  ctx.globalCompositeOperation='multiply'; ctx.fillStyle=colourMask; ctx.fillRect(0,0,W,Hgt);
+  ctx.globalCompositeOperation='screen';
+  // Hard-edged studio lights with a thin feathered rim, like real softboxes.
+  const panel = (x: number, y: number, w: number, h: number, color: string, feather = 3) => {
+    ctx.shadowColor = color; ctx.shadowBlur = feather; ctx.fillStyle = color;
+    ctx.beginPath(); ctx.roundRect((x - w / 2) * W, (y - h / 2) * Hgt, w * W, h * Hgt, Math.min(w * W, h * Hgt) * .18); ctx.fill();
+  };
+  for (const [x, y, w, h, color] of studioLights) panel(x, y, w, h, color);
+  ctx.shadowBlur = 0; ctx.globalCompositeOperation = 'source-over';
   const environmentSource = new THREE.CanvasTexture(canvas); environmentSource.mapping=THREE.EquirectangularReflectionMapping; environmentSource.colorSpace=THREE.SRGBColorSpace;
   const pmrem = new THREE.PMREMGenerator(renderer), environment=pmrem.fromEquirectangular(environmentSource);
   environmentSource.dispose(); pmrem.dispose(); scene.environment=environment.texture;
-  scene.add(new THREE.HemisphereLight(0x7287cf,0x02030b,.35));
+  const hemisphere=new THREE.HemisphereLight(0x7287cf,0x02030b,.35); scene.add(hemisphere);
+  const lights: { light: THREE.Light; power: number; color: number }[]=[];
   for (const [color,x,y,z,power] of [[0xb8f5ff,-1.2,1.8,2.5,8],[0xffa6df,1.6,1.1,1.5,3],[0x406cff,0,2,-1,5],[0xe0eeff,-.8,-1,2,3]]) {
-    const light=new THREE.PointLight(color,power); light.position.set(x,y,z); scene.add(light);
+    const light=new THREE.PointLight(color,power); light.position.set(x,y,z); scene.add(light); lights.push({ light, power, color });
   }
-  const eyeCanvas=document.createElement('canvas'); eyeCanvas.width=eyeCanvas.height=256;
-  const eyeCtx=eyeCanvas.getContext('2d')!; eyeCtx.fillStyle='black'; eyeCtx.fillRect(0,0,256,256);
+  // 1024 px so the glowing eyes keep a crisp edge up close (same 12-14 px radii as the old 256 px map, scaled).
+  const eyeSize=1024, eyeScale=eyeSize/256, eyeCanvas=document.createElement('canvas'); eyeCanvas.width=eyeCanvas.height=eyeSize;
+  const eyeCtx=eyeCanvas.getContext('2d')!; eyeCtx.fillStyle='black'; eyeCtx.fillRect(0,0,eyeSize,eyeSize);
   // Iris centres in Kelly's original atlas (each eye has its own UV island).
   for (const [x,y] of [[.898,.202],[.850,.403]]) {
-    const glow=eyeCtx.createRadialGradient(x*256,y*256,12,x*256,y*256,14);
-    glow.addColorStop(0,'#fff'); glow.addColorStop(1,'#000'); eyeCtx.fillStyle=glow; eyeCtx.fillRect(x*256-15,y*256-15,30,30);
+    const glow=eyeCtx.createRadialGradient(x*eyeSize,y*eyeSize,12*eyeScale,x*eyeSize,y*eyeSize,14*eyeScale);
+    glow.addColorStop(0,'#fff'); glow.addColorStop(1,'#000'); eyeCtx.fillStyle=glow; eyeCtx.fillRect((x*256-15)*eyeScale,(y*256-15)*eyeScale,30*eyeScale,30*eyeScale);
   }
   // glTF UVs start at the top of the image. The bust has no UVs, so it samples the black corner.
-  const eyeMap=new THREE.CanvasTexture(eyeCanvas); eyeMap.colorSpace=THREE.SRGBColorSpace; eyeMap.flipY=false;
+  const eyeMap=new THREE.CanvasTexture(eyeCanvas); eyeMap.colorSpace=THREE.SRGBColorSpace; eyeMap.flipY=false; eyeMap.anisotropy=renderer.capabilities.getMaxAnisotropy();
   const material=new THREE.MeshPhysicalMaterial({color:0x141c36,metalness:.94,roughness:.18,clearcoat:1,clearcoatRoughness:.09,
     iridescence:.65,iridescenceIOR:1.35,iridescenceThicknessRange:[120,430],envMapIntensity:3.4,emissive:0xffffff,emissiveIntensity:2.5,emissiveMap:eyeMap});
   // A closed black lid is a glossy dome, exactly like a black eyeball, so closed eyes passed for open ones.
@@ -97,23 +153,61 @@ export function mountKelly(host: HTMLElement, options: ViewOptions) {
   // In black obsidian the tongue and teeth vanished inside the mouth, so speech showed only the jaw; they get their
   // own matte, softly lit look so the tongue and teeth can be seen following the words.
   const lidClosed={ value: 0 };
+  const lidGlow={ value: new THREE.Color() }, cutLow={ value: new THREE.Vector4() }, cutHigh={ value: new THREE.Vector4() }, cutGlow={ value: 0 };
+  let crown: Crown | undefined, currentLook='neon';
+  // Look uniforms: a vertical colour gradient over the bust (world height), used as surface colour and as glow.
+  const lookGradient={ low: { value: new THREE.Color() }, high: { value: new THREE.Color() }, from: { value: 0 }, to: { value: 1 },
+    glow: { value: 0 }, tint: { value: 0 }, eyeCut: { value: 0 }, edge: { value: 0 } };
+  const rimFire={ strength: { value: 0 }, power: { value: 1 }, colorA: { value: new THREE.Color() }, colorB: { value: new THREE.Color() },
+    scale: { value: 1 }, flicker: { value: 0 }, variation: { value: 0 }, time: { value: 0 } };
   const vec3=(color: number, scale=1) => { const c=new THREE.Color(color).multiplyScalar(scale); return `vec3(${c.r.toFixed(4)},${c.g.toFixed(4)},${c.b.toFixed(4)})`; };
   material.onBeforeCompile=shader=>{
-    shader.uniforms.lidGlow={ value: new THREE.Color(lidGlowColor).multiplyScalar(lidGlowStrength) };
+    Object.assign(shader.uniforms,{ lidGlow, cutLow, cutHigh, cutGlow, cutColor: { value: new THREE.Color(0xd9b8ff) } });
     shader.uniforms.lidClosed=lidClosed;
-    shader.vertexShader=shader.vertexShader.replace('#include <common>','#include <common>\nattribute vec4 lid;\nvarying vec4 vLid;')
-      .replace('#include <begin_vertex>','#include <begin_vertex>\nvLid=lid;');
-    shader.fragmentShader=shader.fragmentShader.replace('#include <common>','#include <common>\nuniform vec3 lidGlow;\nuniform float lidClosed;\nvarying vec4 vLid;')
+    shader.uniforms.gradLow=lookGradient.low; shader.uniforms.gradHigh=lookGradient.high; shader.uniforms.gradFrom=lookGradient.from; shader.uniforms.gradTo=lookGradient.to;
+    shader.uniforms.gradGlow=lookGradient.glow; shader.uniforms.gradTint=lookGradient.tint; shader.uniforms.eyeCut=lookGradient.eyeCut; shader.uniforms.gradEdge=lookGradient.edge;
+    Object.assign(shader.uniforms,{ rimStrength: rimFire.strength, rimPower: rimFire.power, rimA: rimFire.colorA, rimB: rimFire.colorB,
+      rimScale: rimFire.scale, rimFlicker: rimFire.flicker, rimVariation: rimFire.variation, rimTime: rimFire.time });
+    shader.vertexShader=shader.vertexShader.replace('#include <common>','#include <common>\nattribute vec4 lid;\nvarying vec4 vLid;\nvarying float vWorldY;\nvarying vec3 vWorld;')
+      .replace('#include <begin_vertex>','#include <begin_vertex>\nvLid=lid;')
+      .replace('#include <project_vertex>','#include <project_vertex>\nvWorld=(modelMatrix*vec4(transformed,1.)).xyz; vWorldY=vWorld.y;');
+    shader.fragmentShader=shader.fragmentShader.replace('#include <common>',`#include <common>
+        uniform vec3 lidGlow; uniform float lidClosed; varying vec4 vLid; varying float vWorldY;
+        uniform vec3 gradLow, gradHigh; uniform float gradFrom, gradTo, gradGlow, gradTint, eyeCut, gradEdge;
+        uniform vec4 cutLow, cutHigh; uniform float cutGlow; uniform vec3 cutColor;
+        varying vec3 vWorld; uniform float rimStrength, rimPower, rimScale, rimFlicker, rimVariation, rimTime; uniform vec3 rimA, rimB;
+        float rimHash(vec3 p){ p=fract(p*.3183099+.1); p*=17.; return fract(p.x*p.y*p.z*(p.x+p.y+p.z)); }
+        float rimNoise(vec3 x){ vec3 i=floor(x), f=fract(x); f=f*f*(3.-2.*f);
+          return mix(mix(mix(rimHash(i),rimHash(i+vec3(1,0,0)),f.x),mix(rimHash(i+vec3(0,1,0)),rimHash(i+vec3(1,1,0)),f.x),f.y),
+                     mix(mix(rimHash(i+vec3(0,0,1)),rimHash(i+vec3(1,0,1)),f.x),mix(rimHash(i+vec3(0,1,1)),rimHash(i+vec3(1,1,1)),f.x),f.y),f.z); }`)
       .replace('#include <color_fragment>',`#include <color_fragment>
         float teeth=1.-step(.125,vLid.a), gums=step(.125,vLid.a)*(1.-step(.375,vLid.a)), tongue=step(.375,vLid.a)*(1.-step(.75,vLid.a));
         float mouthPart=teeth+gums+tongue;
-        diffuseColor.rgb=mix(diffuseColor.rgb,teeth*${vec3(mouthColors.teeth)}+gums*${vec3(mouthColors.gums)}+tongue*${vec3(mouthColors.tongue)},mouthPart);`)
+        diffuseColor.rgb=mix(diffuseColor.rgb,teeth*${vec3(mouthColors.teeth)}+gums*${vec3(mouthColors.gums)}+tongue*${vec3(mouthColors.tongue)},mouthPart);
+        // Look gradient by height; the eyes are cut out of it so they still read on a bright head.
+        float eyeMask=texture2D(emissiveMap,vEmissiveMapUv).r*eyeCut;
+        vec3 gradColor=mix(gradLow,gradHigh,smoothstep(gradFrom,gradTo,vWorldY));
+        diffuseColor.rgb=mix(diffuseColor.rgb,gradColor,gradTint*(1.-mouthPart))*(1.-eyeMask);`)
       .replace('#include <metalnessmap_fragment>','#include <metalnessmap_fragment>\nmetalnessFactor=mix(metalnessFactor,0.,mouthPart);')
       .replace('#include <roughnessmap_fragment>','#include <roughnessmap_fragment>\nroughnessFactor=mix(roughnessFactor,teeth*.3+gums*.5+tongue*.42,mouthPart);')
       .replace('#include <emissivemap_fragment>',`#include <emissivemap_fragment>
         totalEmissiveRadiance+=lidGlow*(vLid.r*(.15+.85*lidClosed)+vLid.g*lidClosed);
+        // Slot in the skull: both of its edges glow lilac, like the headband in the reference.
+        // Distance to the nearest slot edge: below the slot only the lower face counts, above it only the upper one.
+        float cutDist=max(dot(cutLow.xyz,vWorld)+cutLow.w,dot(cutHigh.xyz,vWorld)+cutHigh.w);
+        totalEmissiveRadiance+=cutColor*cutGlow*(1.-smoothstep(0.,.05,cutDist));
         // The mouth gets almost no environment light, so a faint glow keeps teeth and tongue readable.
-        totalEmissiveRadiance+=teeth*${vec3(mouthColors.teeth,mouthGlow.teeth)}+gums*${vec3(mouthColors.gums,mouthGlow.gums)}+tongue*${vec3(mouthColors.tongue,mouthGlow.tongue)};`)
+        totalEmissiveRadiance+=teeth*${vec3(mouthColors.teeth,mouthGlow.teeth)}+gums*${vec3(mouthColors.gums,mouthGlow.gums)}+tongue*${vec3(mouthColors.tongue,mouthGlow.tongue)};
+        // Surfaces turning away from the camera slide toward the low colour, which gives the glowing head its volume.
+        float grazing=pow(1.-clamp(dot(normal,normalize(vViewPosition)),0.,1.),2.)*gradEdge;
+        totalEmissiveRadiance+=mix(gradColor,gradLow,grazing)*gradGlow*(1.-mouthPart)*(1.-eyeMask);
+        // Rim fire: two octaves of drifting noise pick blue or orange and make the flames brighten and fade.
+        vec3 flameAt=vWorld*rimScale*vec3(1.,.3,1.)+vec3(0.,-rimTime*rimFlicker*2.,rimTime*rimFlicker);
+        float flame=mix(.6,rimNoise(flameAt)*.65+rimNoise(flameAt*2.3)*.35,rimVariation);
+        float rim=pow(1.-clamp(dot(normal,normalize(vViewPosition)),0.,1.),rimPower)*rimStrength;
+        vec3 fire=mix(rimA,rimB,smoothstep(.44,.56,flame));
+        // The hottest strands burn toward white, like the core of a flame.
+        totalEmissiveRadiance+=(fire+vec3(.9,.8,.7)*pow(flame,4.)*.6)*rim*(.3+1.4*flame*flame)*(1.-mouthPart);`)
       .replace('#include <lights_physical_fragment>',`#include <lights_physical_fragment>
         float lidMatte=vLid.b*lidClosed;
         material.roughness=mix(material.roughness,.7,lidMatte);
@@ -125,6 +219,29 @@ export function mountKelly(host: HTMLElement, options: ViewOptions) {
           material.iridescence*=(1.-lidMatte)*(1.-mouthPart);
         #endif`);
   };
+  function applyLook(name: string) {
+    const look=looks[name] ?? looks.neon; currentLook=name;
+    lidGlow.value.set(look.lidColor).multiplyScalar(lidGlowStrength);
+    // Violet opens the skull: clip above the cut, draw both sides so the inside of the head shows, light the cut band.
+    crown?.setVisible(look.crown); cutGlow.value=look.crown && crown ? 1.4 : 0;
+    material.clippingPlanes=look.crown && crown ? crown.planes : null; material.clipIntersection=true; material.side=look.crown ? THREE.DoubleSide : THREE.FrontSide;
+    material.color.set(look.color); material.emissive.set(look.eyes);
+    Object.assign(material,{ metalness: look.metalness, roughness: look.roughness, clearcoat: look.clearcoat,
+      clearcoatRoughness: look.clearcoatRoughness, iridescence: look.iridescence, envMapIntensity: look.envMapIntensity });
+    renderer.toneMapping=look.toneMapping; renderer.toneMappingExposure=look.exposure; material.needsUpdate=true;
+    // The neon environment still tints a pale surface through the clearcoat even at zero intensity; drop it entirely.
+    scene.environment=look.envMapIntensity>0 ? environment.texture : null; hemisphere.intensity=.35*look.lights;
+    for (const { light, power, color } of lights) { light.intensity=power*look.lights; light.color.set(look.lightTint ?? color); }
+    lookGradient.edge.value=look.edge;
+    rimFire.strength.value=look.rim.strength; rimFire.power.value=look.rim.power; rimFire.colorA.value.set(look.rim.colorA);
+    rimFire.colorB.value.set(look.rim.colorB); rimFire.scale.value=look.rim.scale; rimFire.flicker.value=look.rim.flicker; rimFire.variation.value=look.rim.variation;
+    material.sheen=look.sheen; material.sheenColor.set(look.sheenColor); material.sheenRoughness=.55;
+    lookGradient.low.value.set(look.gradient.low); lookGradient.high.value.set(look.gradient.high);
+    lookGradient.from.value=look.gradient.from; lookGradient.to.value=look.gradient.to;
+    lookGradient.glow.value=look.gradient.glow; lookGradient.tint.value=look.gradient.tint; lookGradient.eyeCut.value=look.gradient.eyeCut;
+  }
+  // ?look=halo on the page URL picks a preset; the default is the neon obsidian look.
+  applyLook(new URLSearchParams(location.search).get('look') ?? 'neon');
   const stage=new THREE.Group(); scene.add(stage);
   const heads: THREE.Mesh[] = [], geometries: THREE.BufferGeometry[] = [];
   let disposed=false, frame=0, size: THREE.Vector3 | undefined, lastTime=0, mixer: THREE.AnimationMixer | undefined;
@@ -248,7 +365,12 @@ export function mountKelly(host: HTMLElement, options: ViewOptions) {
   const observer=new ResizeObserver(resize); observer.observe(host); resize();
   function draw(time: number) {
     if (disposed || document.hidden) return;
-    const dt=Math.min((time-lastTime)/1000,.05); lastTime=time;
+    const elapsed=time-lastTime, dt=Math.min(elapsed/1000,.05); lastTime=time;
+    // Adaptive resolution: average the frame time and drop the supersampling a step when frames run slow.
+    frameMs=frameMs*.95+Math.min(elapsed,100)*.05; sinceRatioChange+=dt;
+    if (frameMs>22 && sinceRatioChange>2 && pixelRatio>lowestRatio) {
+      pixelRatio=Math.max(lowestRatio,pixelRatio-.25); renderer.setPixelRatio(pixelRatio); sinceRatioChange=0; frameMs=16;
+    }
     const playback=options.getPlayback();
     const playing=!!playback && !playback.audio.paused && !playback.audio.ended;
     const pose=playback ? mouthPoseAt(playback.cues,playback.audio.currentTime,playing) : {};
@@ -270,12 +392,35 @@ export function mountKelly(host: HTMLElement, options: ViewOptions) {
     // A barely visible sway keeps her alive while she faces the viewer.
     stage.rotation.y=reduced.matches ? 0 : Math.sin(seconds*.3)*.02;
     material.envMapRotation.y=reduced.matches ? 0 : Math.sin(seconds*.16)*.12;
+    rimFire.time.value=reduced.matches ? 0 : seconds;
+    if (crown) crown.setPortal(options.getTheme?.()==='light');
+    if (crown && looks[currentLook]?.crown) {
+      scene.updateMatrixWorld(); crown.update(reduced.matches ? 0 : seconds);
+      for (const [uniform,plane] of [[cutLow,crown.planes[0]],[cutHigh,crown.planes[1]]] as const) uniform.value.set(plane.normal.x,plane.normal.y,plane.normal.z,plane.constant);
+    }
     // Ease toward the framing so the bust glides when a message appears below the title.
     if (options.portrait && size) fitPortrait(dt);
     controls?.update(); renderer.render(scene,camera); frame=requestAnimationFrame(draw);
   }
   function visibility() { cancelAnimationFrame(frame); if (!document.hidden && !disposed) { lastTime=performance.now(); frame=requestAnimationFrame(draw); } }
   document.addEventListener('visibilitychange',visibility);
+  // Memory count for the brain's glow: read when the memory channel connects and again each time it reports a
+  // committed memory. Failures keep the last glow; the channel reconnects if the server restarts.
+  let memoryCount: number | null = null, memorySocket: WebSocket | undefined, memoryRetry: ReturnType<typeof setTimeout> | undefined;
+  async function readMemoryCount() {
+    try {
+      const data: unknown = await (await fetch('/api/memory/count',{ cache: 'no-store', signal: controller.signal })).json();
+      const count=(data as { enabled?: boolean; count?: unknown })?.count;
+      if ((data as { enabled?: boolean })?.enabled && typeof count==='number' && Number.isInteger(count)) { memoryCount=count; crown?.setMemories(count); }
+    } catch { /* keep the current glow */ }
+  }
+  function watchMemories() {
+    if (disposed) return;
+    memorySocket=new WebSocket(`${location.protocol==='https:' ? 'wss:' : 'ws:'}//${location.host}/ws/memories`);
+    memorySocket.onmessage=()=>void readMemoryCount();
+    memorySocket.onclose=()=>{ if (!disposed) memoryRetry=setTimeout(watchMemories,5000); };
+  }
+  watchMemories();
   const load=options.loadModel ?? (async (signal: AbortSignal) => { const response=await fetch('/avatars/kelly.glb',{signal}); if(!response.ok) throw Error('Model unavailable'); return response.arrayBuffer(); });
   void load(controller.signal).then(bytes=>new GLTFLoader().setMeshoptDecoder(MeshoptDecoder).parseAsync(bytes,'')).then(gltf=>{
     if(disposed)return;
@@ -303,20 +448,22 @@ export function mountKelly(host: HTMLElement, options: ViewOptions) {
     if (!reduced.matches) actions.get('breathe')?.play();
     // Dev-only console hook for previewing gestures without a paid voice round trip.
     // kellyState('listening') previews a conversation state; kellyState(null) returns to the real one.
-    if (import.meta.env.DEV) Object.assign(window,{kellyGesture:play,kellyState:(state: ConversationState | null)=>{ previewState=state; },
+    if (import.meta.env.DEV) Object.assign(window,{kellyGesture:play,kellyState:(state: ConversationState | null)=>{ previewState=state; },kellyLook:applyLook,kellyMemories:(count: number)=>crown?.setMemories(count),kellyInternals:{ material, lights, hemisphere, renderer, scene, camera },
       // Active expressions and running clips, for checking that a gesture returned to neutral.
-      kellyDebug:()=>({ viewShift, cameraZ:camera.position.z, headPitch:THREE.MathUtils.radToDeg(new THREE.Euler().setFromQuaternion(avatar.getObjectByName('head')!.getWorldQuaternion(new THREE.Quaternion())).x),
+      kellyDebug:()=>({ pixelRatio, frameMs:+frameMs.toFixed(1), viewShift, cameraZ:camera.position.z, headPitch:THREE.MathUtils.radToDeg(new THREE.Euler().setFromQuaternion(avatar.getObjectByName('head')!.getWorldQuaternion(new THREE.Quaternion())).x),
         clips:[...actions].filter(([,action])=>action.isScheduled()).map(([name,action])=>`${name}:${action.getEffectiveWeight().toFixed(2)}`),
         expressions:Object.entries(heads[0].morphTargetDictionary ?? {}).map(([name,i])=>[name,heads[0].morphTargetInfluences![i]] as const).filter(([,value])=>value>.01) })});
     const bust=new THREE.Group(); bust.add(avatar);
     const bounds=new THREE.Box3().setFromObject(bust,true); size=bounds.getSize(new THREE.Vector3());
     bust.position.copy(bounds.getCenter(new THREE.Vector3())).negate(); stage.add(bust); stage.scale.setScalar(1.9/size.y);
+    crown=createCrown(stage,avatar.getObjectByName('head')!); applyLook(currentLook);
+    if (memoryCount!==null) crown.setMemories(memoryCount);
     resize(); options.onReady?.(); lastTime=performance.now(); if(!document.hidden)frame=requestAnimationFrame(draw);
   }).catch(()=>{if(!disposed)options.onError();});
   return () => {
-    disposed=true; controller.abort(); cancelAnimationFrame(frame); observer.disconnect(); document.removeEventListener('visibilitychange',visibility);
+    disposed=true; controller.abort(); clearTimeout(memoryRetry); memorySocket?.close(); cancelAnimationFrame(frame); observer.disconnect(); document.removeEventListener('visibilitychange',visibility);
     removeEventListener('pointerdown',userActive); removeEventListener('keydown',userActive);
-    mixer?.stopAllAction(); controls?.dispose(); for(const geometry of geometries)geometry.dispose(); material.dispose(); eyeMap.dispose(); environment.dispose();
+    mixer?.stopAllAction(); controls?.dispose(); for(const geometry of geometries)geometry.dispose(); material.dispose(); crown?.dispose(); eyeMap.dispose(); environment.dispose();
     renderer.dispose(); renderer.forceContextLoss(); renderer.domElement.remove();
   };
 }

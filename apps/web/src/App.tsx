@@ -73,7 +73,7 @@ export default function App() {
       <div className="avatar-stage">
         <div className="halo" aria-hidden="true" />
         <button className="avatar" aria-label={state === 'idle' ? 'Despertar avatar' : 'Avatar desperto'} disabled={!online || mode === 'loading' || state !== 'idle' || waking} onClick={() => send('start')}>
-          <Suspense fallback={null}><Avatar3D state={state} recording={recording} playbackRef={playbackRef} clearOf={intro} /></Suspense>
+          <Suspense fallback={null}><Avatar3D state={state} recording={recording} playbackRef={playbackRef} clearOf={intro} theme={theme} /></Suspense>
         </button>
       </div>
       <div className="conversation-cards">

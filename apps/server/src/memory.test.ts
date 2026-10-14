@@ -283,3 +283,17 @@ test('mapa lê somente vetores ativos do usuário local, aceita serialização p
   assert.equal(result.items[0].embedding.length, 1536); assert.equal(requested.includes('openai'), false);
   invalid = true; await assert.rejects(service.vectors(new AbortController().signal), /formato de vetores inválido/);
 });
+
+test('contagem de memórias pede só o total ao Supabase e lê o Content-Range', async () => {
+  let asked = '', prefer = '';
+  const fetcher: typeof fetch = async (input, init) => {
+    asked = String(input); prefer = new Headers(init?.headers).get('Prefer') ?? '';
+    return new Response('[]', { status: 200, headers: { 'Content-Range': '0-0/42' } });
+  };
+  const service = createMemoryService({ url: 'https://example.supabase.co', secret: 'sb_secret_test', userId, openaiKey: 'test' }, fetcher);
+  assert.equal(await service.count!(new AbortController().signal), 42);
+  assert.equal(prefer, 'count=exact');
+  for (const part of ['/rest/v1/talk_memories?', 'active=eq.true', 'status=eq.known', 'embedding=not.is.null', `user_id=eq.${userId}`]) assert.ok(asked.includes(part), part);
+  const broken: typeof fetch = async () => new Response('[]', { status: 200 });
+  await assert.rejects(createMemoryService({ url: 'https://example.supabase.co', secret: 'sb_secret_test', userId, openaiKey: 'test' }, broken).count!(new AbortController().signal));
+});

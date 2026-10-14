@@ -40,6 +40,8 @@ export interface MemoryService {
   save(id: string, user: string, assistant: string, context: MemoryContext, learning: Learning, signal: AbortSignal, diagnostic?: DiagnosticSink): Promise<void>;
   inspect(signal: AbortSignal): Promise<MemoryContext>;
   vectors(signal: AbortSignal): Promise<VectorSnapshot>;
+  // Saved facts with an embedding (the same set the memory map shows), counted without downloading vectors.
+  count?(signal: AbortSignal): Promise<number>;
 }
 export type MemoryConfig = { url: string; secret: string; userId: string; openaiKey: string };
 
@@ -278,6 +280,17 @@ export function createMemoryService(config: MemoryConfig, fetcher: typeof fetch 
         emitDiagnostic(report, { stage, outcome: signal.aborted ? 'cancelled' : 'failed', reason: 'service_error' });
         throw error;
       }
+    },
+    async count(signal) {
+      // PostgREST returns the total in Content-Range ("0-0/42") when asked for an exact count.
+      const query = new URLSearchParams({ select: 'id', user_id: `eq.${config.userId}`, active: 'eq.true', status: 'eq.known',
+        embedding: 'not.is.null', limit: '1' });
+      const response = await fetcher(`${config.url}/rest/v1/talk_memories?${query}`, {
+        headers: { apikey: config.secret, Prefer: 'count=exact' }, signal: AbortSignal.any([signal, AbortSignal.timeout(10_000)]) });
+      await response.body?.cancel();
+      const total = Number(response.headers.get('content-range')?.split('/')[1]);
+      if (!response.ok || !Number.isInteger(total) || total < 0) throw new Error('Memória: não foi possível contar as memórias.');
+      return total;
     },
     async vectors(signal) {
       // A identidade vem da configuração do servidor, nunca de um parâmetro do navegador.
