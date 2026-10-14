@@ -1,5 +1,14 @@
 import * as THREE from 'three';
 import { mergeVertices } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
+import type { PortraitPoint } from './portrait';
+
+// Include the portal's transparent shadow bounds and the orbit envelope. Keep
+// the same clearance in both themes so switching themes cannot cross the text.
+export const crownPortraitPoints: readonly PortraitPoint[] = [
+  { x: 0, y: 2.2, z: -1.25 }, { x: 1.7, y: .5, z: -1.25 },
+  { x: 0, y: 1.55, z: -1.1 }, { x: 1.05, y: .5, z: -1.1 },
+  { x: .7, y: 1.5, z: .7 },
+];
 
 // Extras of the violet look: a lilac disc behind the head, a slot cut around the skull showing a glowing brain
 // that pulses like a heartbeat, and dark spheres orbiting the head. Positions are world units of the 1.9-tall bust

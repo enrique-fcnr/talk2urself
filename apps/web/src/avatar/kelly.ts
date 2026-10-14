@@ -2,7 +2,8 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { MeshoptDecoder } from 'three/examples/jsm/libs/meshopt_decoder.module.js';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
-import { createCrown, type Crown } from './crown';
+import { createCrown, crownPortraitPoints, type Crown } from './crown';
+import { portraitFrame, portraitViewport } from './portrait';
 import { mouthMorphs, mouthPoseAt, type AvatarPlayback } from '../../../../shared/lip-sync';
 import type { ConversationState } from '../../../../shared/protocol';
 import type { SpeechGesture } from '../../../../shared/gestures';
@@ -84,6 +85,7 @@ type ViewOptions = {
   getTheme?: () => 'light' | 'dark';
   // Pixels from the top of the view that page content covers; the head stays below them.
   getHeadroom?: () => number;
+  getBottomAnchored?: () => boolean;
   loadModel?: (signal: AbortSignal) => Promise<ArrayBuffer>;
   onReady?: () => void;
   onError: () => void;
@@ -244,11 +246,12 @@ export function mountKelly(host: HTMLElement, options: ViewOptions) {
   applyLook(new URLSearchParams(location.search).get('look') ?? 'neon');
   const stage=new THREE.Group(); scene.add(stage);
   const heads: THREE.Mesh[] = [], geometries: THREE.BufferGeometry[] = [];
-  let disposed=false, frame=0, size: THREE.Vector3 | undefined, lastTime=0, mixer: THREE.AnimationMixer | undefined;
-  let lastState=options.getState(), listenTimer=3, sinceYawn=0, idleFor=0, idleYawnAfter=firstIdleYawn, tiltRelease=0, glanceIn=glanceEvery(), viewShift=0;
+  let disposed=false, frame=0, size: THREE.Vector3 | undefined, lastTime=0, mixer: THREE.AnimationMixer | undefined, topBleed=0;
+  let lastState: ConversationState='idle', listenTimer=3, sinceYawn=0, idleFor=0, idleYawnAfter=firstIdleYawn, tiltRelease=0, glanceIn=glanceEvery(), viewShift=0;
   let cuePlayback: AvatarPlayback | null=null, nextCue=0, previewState: ConversationState | null=null;
   const actions=new Map<string, THREE.AnimationAction>(), lip: Partial<Record<string, number>>={}, clipMorphs: number[][]=[];
   const reduced=matchMedia('(prefers-reduced-motion: reduce)');
+  const desktopView=matchMedia('(min-width: 1001px)');
   // Adds on top of what the gesture clips wrote this frame.
   function morph(name: string,value: number) { for (const mesh of heads) { const i=mesh.morphTargetDictionary?.[name]; if (i!==undefined && mesh.morphTargetInfluences) mesh.morphTargetInfluences[i]=THREE.MathUtils.clamp(mesh.morphTargetInfluences[i]+value,0,1); } }
   // Eased weight changes that start from the current weight, so a pose can leave and come back from where it is.
@@ -280,7 +283,8 @@ export function mountKelly(host: HTMLElement, options: ViewOptions) {
   // Clicks and key presses count as the user being active.
   function userActive() { idleFor=0; idleYawnAfter=firstIdleYawn; }
   addEventListener('pointerdown',userActive); addEventListener('keydown',userActive);
-  // Asleep is the wake clip held on its first frame, so waking lets it run on from there with no jump at the click.
+  // Rest is the wake clip held on its first frame. Leaving it blends directly
+  // to the forward-facing posture, without playing the full wake sequence.
   function sleep(seconds: number) {
     const action=actions.get('wake'); if (!action) return;
     blends.delete(action); action.reset().play(); action.paused=true;
@@ -288,9 +292,11 @@ export function mountKelly(host: HTMLElement, options: ViewOptions) {
   }
   function wakeUp() {
     const action=actions.get('wake'); if (!action) return;
-    // Woken while still settling into sleep: finish the blend quickly instead of snapping to the full pose.
-    if (action.getEffectiveWeight()<1) ease(action,1,.4); else blends.delete(action);
-    if (reduced.matches) action.stop(); else action.paused=false;
+    // Keep the bowed pose frozen and gently remove its weight. The existing
+    // posture underneath raises the head to face the viewer, with no overshoot.
+    action.paused=true;
+    if (reduced.matches) { blends.delete(action); action.stop(); }
+    else ease(action,0,releaseSeconds);
   }
   function direct(state: ConversationState, dt: number, playback: AvatarPlayback | null, playing: boolean) {
     if (state!==lastState) {
@@ -324,13 +330,24 @@ export function mountKelly(host: HTMLElement, options: ViewOptions) {
   }
   function resize() {
     if (disposed) return;
-    const width=host.clientWidth || 1,height=host.clientHeight || 1; camera.aspect=width/height; camera.updateProjectionMatrix(); renderer.setSize(width,height);
-    if (!size) return;
-    if (options.portrait) { fitPortrait(null); return; }
-    const angle=Math.tan(THREE.MathUtils.degToRad(camera.fov)/2), halfHeight=.95,halfWidth=size.x/size.y*halfHeight;
-    const distance=Math.max(halfHeight/angle,halfWidth/(angle*camera.aspect))*1.14+size.z/size.y;
-    camera.position.set(0,.04,distance);
-    if (controls) { controls.minDistance=distance*.65; controls.maxDistance=distance*1.7; controls.update(); }
+    const width=host.clientWidth || 1,height=host.clientHeight || 1;
+    topBleed=options.portrait && desktopView.matches ? Math.ceil(height*.4) : 0;
+    camera.aspect=width/height; camera.updateProjectionMatrix();
+    const viewport=portraitViewport(height,viewShift,topBleed);
+    renderer.setSize(width,viewport.renderHeight);
+    Object.assign(renderer.domElement.style,{position:'absolute',top:`${-topBleed}px`,width:'100%',height:`${viewport.renderHeight}px`});
+    if (size) {
+      if (options.portrait) fitPortrait(null);
+      else {
+        const angle=Math.tan(THREE.MathUtils.degToRad(camera.fov)/2), halfHeight=.95,halfWidth=size.x/size.y*halfHeight;
+        const distance=Math.max(halfHeight/angle,halfWidth/(angle*camera.aspect))*1.14+size.z/size.y;
+        camera.position.set(0,.04,distance);
+        if (controls) { controls.minDistance=distance*.65; controls.maxDistance=distance*1.7; controls.update(); }
+      }
+    }
+    // Changing the drawing-buffer size clears it. ResizeObserver runs before
+    // paint, so redraw here rather than exposing a transparent frame until RAF.
+    renderer.render(scene,camera);
   }
   // Portrait framing, in world units: the bust is 1.9 tall and centred, so the head top sits at .95.
   // The camera keeps room above it for gestures that raise the head, keeps it below the page text,
@@ -346,21 +363,22 @@ export function mountKelly(host: HTMLElement, options: ViewOptions) {
   // dt null snaps to the framing (first layout and window resizes).
   function fitPortrait(dt: number | null) {
     const height=host.clientHeight || 1, tan=Math.tan(THREE.MathUtils.degToRad(camera.fov)/2);
-    const designDistance=Math.max(.88/tan,.68/(tan*camera.aspect))+size!.z/size!.y*.3;
-    const designScale=height/(2*designDistance*tan), rect=host.getBoundingClientRect();
+    const designDistance=(Math.max(.88/tan,.68/(tan*camera.aspect))+size!.z/size!.y*.3)*.9;
+    const rect=host.getBoundingClientRect();
     const headroom=Math.max(0,options.getHeadroom?.() ?? 0), visibleBottom=height-Math.max(0,rect.bottom-innerHeight);
-    const scale=Math.min(designScale,(visibleBottom-headroom)/(headClearance-neckLine));
-    const distance=height/(2*scale*tan), half=distance*tan;
-    // Pixels from the canvas top to the head's clearance line: the design's position unless that is under the text or off the edge.
-    const top=Math.max(headroom,(.04+half-headClearance)*scale);
-    // Render from eye level so her gaze meets the viewer's, then shift the image to where a camera
-    // at the framing height would have placed the bust. A higher or lower camera would make her look past you.
-    const framingY=headClearance-half+top/scale, width=host.clientWidth || 1;
+    const width=host.clientWidth || 1;
+    const bottomAnchored=!!options.getBottomAnchored?.();
+    // Once the intro leaves on desktop, frame the face and bust as the subject.
+    // The decorative halo may extend outside the frame instead of shrinking Kelly.
+    const focusAvatar=bottomAnchored && desktopView.matches;
+    const { distance, viewShift: shift }=portraitFrame({ width,height,headroom,visibleBottom,tan,designDistance,eyeLevel,
+      bottomAnchored, bottomCrop:focusAvatar ? Math.min(96,height*.14) : 0,
+      points:[{ x:0,y:headClearance,z:0 },{ x:0,y:bottomAnchored ? -.95 : neckLine,z:0 },...(looks[currentLook]?.crown && !focusAvatar ? crownPortraitPoints : [])] });
     camera.position.y=eyeLevel;
-    const shift=(eyeLevel-framingY)*scale;
     if (dt===null) { camera.position.z=distance; viewShift=shift; framingVelocity.z=framingVelocity.shift=0; }
     else { camera.position.z=smoothDamp(camera.position.z,distance,'z',dt); viewShift=smoothDamp(viewShift,shift,'shift',dt); }
-    camera.setViewOffset(width,height,0,viewShift,width,height);
+    const viewport=portraitViewport(height,viewShift,topBleed);
+    camera.setViewOffset(width,height,0,viewport.offsetY,width,viewport.renderHeight);
   }
   const observer=new ResizeObserver(resize); observer.observe(host); resize();
   function draw(time: number) {
