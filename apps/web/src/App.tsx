@@ -1,14 +1,9 @@
 import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import { useConversation } from './useConversation';
-import type { ConversationState } from '../../../shared/protocol';
-import { maxRecordingSeconds } from '../../../shared/protocol';
 const Avatar3D = lazy(() => import('./avatar/Avatar3D'));
-const labels: Record<ConversationState, { title: string; hint: string }> = {
-  idle: { title: 'Um espaço para pensar em voz alta.', hint: 'Toque no avatar para despertar.' },
-  listening: { title: 'Uma história para reconstruir.', hint: 'Comece a falar e envie quando terminar.' },
-  thinking: { title: 'Um instante para refletir.', hint: 'Preparando sua resposta…' },
-  speaking: { title: 'Olhe para a ideia por outro ângulo.', hint: 'Ouça a resposta e depois continue.' },
-};
+// Start screen: "a smarter version of you", with the adjective cycling. Feminine forms agree with "versão".
+const adjectives = ['inteligente', 'sábia', 'criativa', 'corajosa', 'calma', 'curiosa', 'confiante', 'gentil', 'focada', 'ousada'];
+const wordSeconds = 2.2, exitSeconds = .65, toastSeconds = 6;
 type Theme = 'light' | 'dark';
 function Icon({ name }: { name: 'mic' | 'sun' | 'moon' | 'pause' | 'close' | 'play' | 'gear' }) {
   return <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -24,7 +19,26 @@ function Icon({ name }: { name: 'mic' | 'sun' | 'moon' | 'pause' | 'close' | 'pl
 export default function App() {
   const { state, connection, mode, text, transcript, error, send, waking, recording, starting, submitting, needsPlayback, playbackRef, startRecording, finishRecording, playAnswer } = useConversation();
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const intro = useRef<HTMLElement>(null);
+  const [started, setStarted] = useState(false), [leaving, setLeaving] = useState(false), [wordIndex, setWordIndex] = useState(0);
+  const [toast, setToast] = useState('');
+  // What sits at the top of the page; Kelly's head is framed below it.
+  const topContent = useRef<HTMLElement>(null);
+  useEffect(() => {
+    if (started) return;
+    const timer = setInterval(() => setWordIndex((index) => (index + 1) % adjectives.length), wordSeconds * 1000);
+    return () => clearInterval(timer);
+  }, [started]);
+  useEffect(() => {
+    setToast(error);
+    if (!error) return;
+    const timer = setTimeout(() => setToast(''), toastSeconds * 1000);
+    return () => clearTimeout(timer);
+  }, [error]);
+  function begin() {
+    if (leaving) return;
+    setLeaving(true);
+    setTimeout(() => setStarted(true), exitSeconds * 1000);
+  }
   const [theme, setTheme] = useState<Theme>(() => {
     try { return localStorage.getItem('talk2urself-theme') === 'dark' ? 'dark' : 'light'; } catch { return 'light'; }
   });
@@ -37,19 +51,22 @@ export default function App() {
   }, [settingsOpen]);
   const busy = state === 'thinking' || state === 'speaking' || starting || submitting;
   const online = connection === 'online';
-  const primaryLabel = state === 'idle' ? 'Despertar' : starting ? 'Acessando microfone…' : busy ? 'Aguarde a resposta'
-    : mode === 'demo' ? 'Simular pergunta' : recording ? 'Enviar fala' : 'Começar a falar';
   const status = !online ? connection === 'connecting' ? 'Conectando…' : 'Reconectando…' : waking ? 'Despertando' : recording ? 'Ouvindo você'
     : ({ idle: 'Em repouso', listening: 'Pronto para ouvir', thinking: 'Refletindo', speaking: 'Respondendo' })[state];
-  function primaryAction() {
-    if (state === 'idle') send('start');
+  // Kelly herself is the control: wake her, start and send a recording, or play a reply the browser held back.
+  const avatarLabel = needsPlayback ? 'Tocar resposta' : state === 'idle' ? 'Despertar' : starting ? 'Acessando microfone'
+    : busy ? 'Aguarde a resposta' : mode === 'demo' ? 'Simular pergunta' : recording ? 'Enviar fala' : 'Começar a falar';
+  const avatarReady = started && online && mode !== 'loading' && !waking && (needsPlayback || !busy);
+  function avatarAction() {
+    if (needsPlayback) void playAnswer();
+    else if (state === 'idle') send('start');
     else if (mode === 'demo') send('submit-demo');
     else if (recording) finishRecording();
     else void startRecording();
   }
-  return <div className="app" data-theme={theme} data-state={state} data-waking={waking} data-recording={recording}>
-    <header className="header">
-      <a className="wordmark" href="/" aria-label="Talk2urself — início">talk<span>2</span>urself<span className="brand-dot">.</span></a>
+  return <div className="app" data-theme={theme} data-state={state} data-waking={waking} data-recording={recording} data-started={started}>
+    <header className="header" ref={started ? topContent : undefined}>
+      {started ? null : <a className="wordmark" href="/" aria-label="Talk2urself — início">talk<span>2</span>urself<span className="brand-dot">.</span></a>}
       <nav className="header-actions" aria-label="Navegação principal">
         <button className="settings-toggle" aria-label="Abrir configurações" title="Configurações" aria-expanded={settingsOpen} aria-controls="experience-panel" onClick={() => setSettingsOpen((open) => !open)}><Icon name="gear" /></button>
         <button className="theme-toggle" aria-label={theme === 'light' ? 'Ativar tema escuro' : 'Ativar tema claro'} title={theme === 'light' ? 'Tema escuro' : 'Tema claro'} aria-pressed={theme === 'dark'} onClick={() => setTheme(theme === 'light' ? 'dark' : 'light')}><Icon name={theme === 'light' ? 'moon' : 'sun'} /></button>
@@ -58,41 +75,29 @@ export default function App() {
     {settingsOpen ? <aside className="guide" id="experience-panel" aria-label="Configurações">
       <div className="panel-heading"><strong>Configurações</strong><button className="panel-close" aria-label="Fechar painel" onClick={() => setSettingsOpen(false)}><Icon name="close" /></button></div>
       <a className="memory-entry" href="/memories" target="_blank" rel="noreferrer"><strong>Memórias <span aria-hidden="true">↗</span></strong><span>Acessar o cérebro e explorar os embeddings.</span></a>
+      {online && state !== 'idle' ? <button className="memory-entry rest-entry" onClick={() => { send('reset'); setSettingsOpen(false); }}><strong>Pôr para dormir</strong><span>Encerrar a conversa e deixar a Kelly em repouso.</span></button> : null}
         <details><summary>Créditos do avatar</summary>
           <p>Modelo provisório <a href="https://sketchfab.com/3d-models/kelly-woman-head-with-blendshapes-938d50fda06c46109d6877c85c6ec3d2" target="_blank" rel="noreferrer">Kelly, de skullvez</a>, CC BY 4.0. Acabamento e ombros adaptados.</p>
         </details>
     </aside> : null}
     <main className="experience">
-      <section ref={intro} className="intro" aria-label="Estado da conversa">
-        <span className="state-pill" role="status"><span className="state-dot" />{status}</span>
-        <h1>{labels[state].title}</h1>
-        <p className="subtitle">Sua história, por outro ângulo.</p>
-        <p className="hint">{recording ? `Fale e clique em Enviar fala. Até ${maxRecordingSeconds} segundos por gravação.` : mode === 'demo' && state === 'listening' ? 'Experimente uma pergunta demonstrativa.' : mode === 'demo' && busy ? 'Resposta demonstrativa, sem consumo de créditos.' : labels[state].hint}</p>
-        {error ? <p className="error" role="alert">{error}</p> : null}
-      </section>
+      {started ? null : <button className={`start-screen ${leaving ? 'leaving' : ''}`} onClick={begin}>
+        <span ref={topContent} className="start-copy">
+          <span className="start-title">Converse com uma versão mais <span className="rotating-word" key={wordIndex}>{adjectives[wordIndex]}</span> de você</span>
+          <span className="start-hint">Toque para começar</span>
+        </span>
+      </button>}
+      {/* The screen shows only Kelly; status and both sides of the conversation stay available to screen readers. */}
+      <span className="sr-only" role="status">{status}</span>
+      <section className="sr-only" aria-label="Sua fala">{transcript}</section>
+      <section className="sr-only" aria-label="Resposta do personagem" aria-live="polite" aria-atomic="true">{text}</section>
       <div className="avatar-stage">
         <div className="halo" aria-hidden="true" />
-        <button className="avatar" aria-label={state === 'idle' ? 'Despertar avatar' : 'Avatar desperto'} disabled={!online || mode === 'loading' || state !== 'idle' || waking} onClick={() => send('start')}>
-          <Suspense fallback={null}><Avatar3D state={state} recording={recording} playbackRef={playbackRef} clearOf={intro} theme={theme} /></Suspense>
+        <button className="avatar" aria-label={avatarLabel} disabled={!avatarReady} onClick={avatarAction}>
+          <Suspense fallback={null}><Avatar3D state={state} recording={recording} playbackRef={playbackRef} clearOf={topContent} theme={theme} /></Suspense>
         </button>
       </div>
-      <div className="conversation-cards">
-        <section className={`conversation-card user-card ${transcript ? 'has-content' : ''}`} aria-label="Sua fala">
-          <span className="card-label">Você</span><p>{transcript || (recording ? 'Estou ouvindo. Conte no seu ritmo.' : 'Sua história começa aqui.')}</p>
-        </section>
-        <section className={`conversation-card reply-card ${text ? 'has-content' : ''}`} aria-label="Resposta do personagem" aria-live="polite" aria-atomic="true">
-          <span className="card-label">Resposta</span><p>{text || (state === 'thinking' ? 'Um instante para conectar as ideias…' : 'Um espaço para refletir com calma.')}</p>
-        </section>
-      </div>
-      {needsPlayback ? <button className="playback-action" onClick={() => void playAnswer()}><Icon name="play" />Tocar resposta</button> : null}
-      <div className="actions" aria-label="Controles de voz">
-        <button className="primary-action" disabled={!online || busy || waking || mode === 'loading'} onClick={primaryAction}>
-          <span className={`mic-disc ${busy ? 'busy' : ''}`}><Icon name={state === 'speaking' ? 'play' : 'mic'} /></span><span>{primaryLabel}</span>
-        </button>
-        <span className="control-divider" aria-hidden="true" />
-        <button className="rest-action" aria-label="Voltar ao repouso" title="Voltar ao repouso" disabled={!online || state === 'idle'} onClick={() => send('reset')}><Icon name="pause" /></button>
-      </div>
-      <span className="footer-note">{mode === 'demo' ? 'PRÉVIA DEMONSTRATIVA' : 'UM ENCONTRO COM SUAS IDEIAS'}</span>
+      {started && toast ? <p className="toast" role="alert">{toast}</p> : null}
     </main>
   </div>;
 }
