@@ -89,6 +89,8 @@ type ViewOptions = {
   getHeadroom?: () => number;
   // Pixels from the bottom of the view that page content covers; Kelly is centred between the two.
   getFootroom?: () => number;
+  // Pixels to move Kelly right of the view's centre (a layout with copy on the left); she glides when it changes.
+  getShiftX?: () => number;
   getBottomAnchored?: () => boolean;
   loadModel?: (signal: AbortSignal) => Promise<ArrayBuffer>;
   onReady?: () => void;
@@ -253,7 +255,7 @@ export function mountKelly(host: HTMLElement, options: ViewOptions) {
   const stage=new THREE.Group(); scene.add(stage);
   const heads: THREE.Mesh[] = [], geometries: THREE.BufferGeometry[] = [];
   let disposed=false, frame=0, size: THREE.Vector3 | undefined, lastTime=0, mixer: THREE.AnimationMixer | undefined, topBleed=0;
-  let lastState: ConversationState='idle', listenTimer=3, sinceYawn=0, idleFor=0, idleYawnAfter=firstIdleYawn, tiltRelease=0, glanceIn=glanceEvery(), viewShift=0;
+  let lastState: ConversationState='idle', listenTimer=3, sinceYawn=0, idleFor=0, idleYawnAfter=firstIdleYawn, tiltRelease=0, glanceIn=glanceEvery(), viewShift=0, viewShiftX=0;
   let cuePlayback: AvatarPlayback | null=null, nextCue=0, previewState: ConversationState | null=null;
   const actions=new Map<string, THREE.AnimationAction>(), lip: Partial<Record<string, number>>={}, clipMorphs: number[][]=[];
   const reduced=matchMedia('(prefers-reduced-motion: reduce)');
@@ -369,8 +371,8 @@ export function mountKelly(host: HTMLElement, options: ViewOptions) {
   // The camera keeps room above it for gestures that raise the head, keeps it below the page text,
   // and only zooms out when the face and neck would not otherwise fit above the bottom of the screen.
   // Critically damped follow: starts and settles gently, so a framing change never jolts the bust.
-  const framingVelocity={ z: 0, shift: 0 };
-  function smoothDamp(current: number, target: number, key: 'z' | 'shift', dt: number) {
+  const framingVelocity={ z: 0, shift: 0, x: 0 };
+  function smoothDamp(current: number, target: number, key: 'z' | 'shift' | 'x', dt: number) {
     const omega=2/framingSeconds, x=omega*dt, decay=1/(1+x+.48*x*x+.235*x*x*x);
     const change=current-target, push=(framingVelocity[key]+omega*change)*dt;
     framingVelocity[key]=(framingVelocity[key]-omega*push)*decay;
@@ -396,10 +398,11 @@ export function mountKelly(host: HTMLElement, options: ViewOptions) {
       bottomAnchored, bottomCrop:focusAvatar ? Math.min(96,height*.14) : 0,
       points:[{ x:0,y:headClearance,z:0 },{ x:0,y:bottomAnchored ? -.95 : neckLine,z:0 },...(looks[currentLook]?.crown && !focusAvatar ? crownPortraitPoints : [])] });
     camera.position.y=eyeLevel;
-    if (dt===null) { camera.position.z=distance; viewShift=shift; framingVelocity.z=framingVelocity.shift=0; }
-    else { camera.position.z=smoothDamp(camera.position.z,distance,'z',dt); viewShift=smoothDamp(viewShift,shift,'shift',dt); }
+    const shiftX=options.getShiftX?.() ?? 0;
+    if (dt===null) { camera.position.z=distance; viewShift=shift; viewShiftX=shiftX; framingVelocity.z=framingVelocity.shift=framingVelocity.x=0; }
+    else { camera.position.z=smoothDamp(camera.position.z,distance,'z',dt); viewShift=smoothDamp(viewShift,shift,'shift',dt); viewShiftX=smoothDamp(viewShiftX,shiftX,'x',dt); }
     const viewport=portraitViewport(height,viewShift,topBleed);
-    camera.setViewOffset(width,height,0,viewport.offsetY,width,viewport.renderHeight);
+    camera.setViewOffset(width,height,-viewShiftX,viewport.offsetY,width,viewport.renderHeight);
   }
   const observer=new ResizeObserver(resize); observer.observe(host); resize();
   function draw(time: number) {

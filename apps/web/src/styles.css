@@ -143,7 +143,8 @@ h1 { font-size: clamp(23px, 2.6vw, 35px); line-height: 1.3; letter-spacing: -1.1
 .wake-button svg { width: 18px; height: 18px; }
 @keyframes wake-breathe { 50% { box-shadow: 0 10px 40px #7e58cb66; } }
 .start-note { margin: 0; max-width: 380px; text-align: center; font-size: 11px; line-height: 1.5; color: var(--faint); }
-.app[data-theme='dark'] .wake-button { background: #9d7be6; box-shadow: 0 10px 30px #00000055; }
+/* Dark theme: a brighter lilac would drop white text below 4.5:1, so it stays at 5.3:1 and glows instead. */
+.app[data-theme='dark'] .wake-button { background: #7a52d1; box-shadow: 0 10px 34px #7a52d155; }
 @media (min-width: 1001px) {
   .avatar-stage { height: clamp(420px, 88svh, 1000px); }
   .avatar { overflow: visible; }
@@ -202,4 +203,21 @@ h1 { font-size: clamp(23px, 2.6vw, 35px); line-height: 1.3; letter-spacing: -1.1
 .app .avatar-3d canvas {
   -webkit-mask-image: linear-gradient(to top, transparent calc(var(--fade-bottom, 0px) + 4px), #000 calc(var(--fade-bottom, 0px) + 130px));
   mask-image: linear-gradient(to top, transparent calc(var(--fade-bottom, 0px) + 4px), #000 calc(var(--fade-bottom, 0px) + 130px));
+}
+.start-actions { pointer-events: auto; }
+/* Wide screens: copy and wake button in a column on the left, Kelly large on the right (she glides to the centre on waking). */
+@media (min-width: 1100px) {
+  /* One frame, at most 1280px wide and centred: the wordmark, the copy and Kelly's column all share its edges. */
+  .app { --frame-inset: max(3.2vw, calc((100vw - 1280px) / 2)); }
+  .header { padding-left: var(--frame-inset); padding-right: var(--frame-inset); }
+  .avatar-stage { width: 100vw; }
+  .start-screen { align-items: center; justify-content: flex-start; padding: 0 0 0 var(--frame-inset); }
+  .start-content { width: min(540px, 40vw); text-align: left; }
+  .start-copy { align-items: flex-start; gap: 18px; }
+  .start-title { font-size: clamp(40px, 3.7vw, 60px); line-height: 1.08; letter-spacing: -1.6px; text-wrap: balance; }
+  .start-lede { font-size: 17px; max-width: 440px; }
+  .start-promises { justify-content: flex-start; }
+  .start-actions { position: static; align-items: flex-start; padding: 0; margin-top: 40px; }
+  .start-note { text-align: left; }
+  .start-screen.leaving .start-actions { transform: translateY(8px); }
 }

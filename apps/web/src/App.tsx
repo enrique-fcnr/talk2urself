@@ -29,6 +29,13 @@ export default function App() {
   const [started, setStarted] = useState(false), [leaving, setLeaving] = useState(false), [wordIndex, setWordIndex] = useState(0);
   const [entryAwake, setEntryAwake] = useState(false);
   const [toast, setToast] = useState('');
+  // Wide screens get a two-column start: copy on the left, Kelly on the right; she glides to the centre on waking.
+  const [wide, setWide] = useState(() => matchMedia('(min-width: 1100px)').matches);
+  useEffect(() => {
+    const query = matchMedia('(min-width: 1100px)'), change = () => setWide(query.matches);
+    query.addEventListener('change', change);
+    return () => query.removeEventListener('change', change);
+  }, []);
   // Saved memories: a returning visitor is greeted with them. undefined until known (or given up on after 2.5 s).
   const [memories, setMemories] = useState<number | undefined>();
   useEffect(() => {
@@ -121,14 +128,14 @@ export default function App() {
             <span className="start-lede">Uma conversa por voz que aprende com você e lembra do que importa.</span>
             <ul className="start-promises" aria-label="O que ela faz">{promises.map((promise) => <li key={promise}>{promise}</li>)}</ul>
           </div>}
+          <div className="start-actions" ref={bottomContent}>
+            <button className="wake-button" onClick={begin} disabled={leaving}>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 3v2M12 19v2M3 12h2M19 12h2M6 6l1.4 1.4M16.6 16.6 18 18M6 18l1.4-1.4M16.6 7.4 18 6" /><circle cx="12" cy="12" r="3.2" /></svg>
+              Acordar a Kelly
+            </button>
+            <p className="start-note">O microfone só grava quando você toca nela. As memórias ficam guardadas para as próximas conversas.</p>
+          </div>
         </section>
-        <div className="start-actions" ref={bottomContent}>
-          <button className="wake-button" onClick={begin} disabled={leaving}>
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 3v2M12 19v2M3 12h2M19 12h2M6 6l1.4 1.4M16.6 16.6 18 18M6 18l1.4-1.4M16.6 7.4 18 6" /><circle cx="12" cy="12" r="3.2" /></svg>
-            Acordar a Kelly
-          </button>
-          <p className="start-note">O microfone só grava quando você toca nela. As memórias ficam guardadas para as próximas conversas.</p>
-        </div>
       </div>}
       {/* The screen shows only Kelly; status and both sides of the conversation stay available to screen readers. */}
       {!started && !leaving ? <span className="sr-only" role="status">{status}</span> : null}
@@ -139,7 +146,7 @@ export default function App() {
         <button className="avatar" aria-label={avatarLabel} aria-disabled={!avatarReady} disabled={!started || !online} data-over-brain={overBrain} title={overBrain ? 'Ver memórias' : undefined} onClick={avatarAction}
           onPointerMove={(event) => { const over = started && !recording && event.pointerType === 'mouse' && !!brainProbe.current?.(event.clientX, event.clientY); if (over !== overBrain) setOverBrain(over); }}
           onPointerLeave={() => setOverBrain(false)}>
-          <Suspense fallback={null}><Avatar3D state={avatarState} recording={recording} playbackRef={playbackRef} clearOf={topContent} theme={theme} brainProbe={brainProbe} clearBelow={bottomContent} holdLayout={leaving || started} /></Suspense>
+          <Suspense fallback={null}><Avatar3D state={avatarState} recording={recording} playbackRef={playbackRef} clearOf={topContent} theme={theme} brainProbe={brainProbe} clearBelow={bottomContent} holdLayout={leaving || started} aside={wide && !leaving && !started} /></Suspense>
         </button>
       </div>
       {started || leaving ? <div className="character-status" data-activity={activity} role="status" aria-atomic="true">
