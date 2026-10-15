@@ -77,6 +77,8 @@ const gestureTuning: Partial<Record<Gesture, { speed: number; strength: number }
 // Seconds for a held pose to ease back to neutral, and to ease back in when requested again.
 const releaseSeconds = 1.2, resumeSeconds = .6;
 
+// Whether a point on the page (client pixels) falls on the violet look's brain; if so, the brain's centre on the page.
+export type BrainProbe = (clientX: number, clientY: number) => { x: number; y: number } | null;
 type ViewOptions = {
   getPlayback: () => AvatarPlayback | null;
   getState: () => ConversationState;
@@ -85,9 +87,13 @@ type ViewOptions = {
   getTheme?: () => 'light' | 'dark';
   // Pixels from the top of the view that page content covers; the head stays below them.
   getHeadroom?: () => number;
+  // Pixels from the bottom of the view that page content covers; Kelly is centred between the two.
+  getFootroom?: () => number;
   getBottomAnchored?: () => boolean;
   loadModel?: (signal: AbortSignal) => Promise<ArrayBuffer>;
   onReady?: () => void;
+  // Receives the brain hit test once the avatar has loaded.
+  onBrainProbe?: (probe: BrainProbe) => void;
   onError: () => void;
   interactive?: boolean;
   portrait?: boolean;
@@ -251,6 +257,7 @@ export function mountKelly(host: HTMLElement, options: ViewOptions) {
   let cuePlayback: AvatarPlayback | null=null, nextCue=0, previewState: ConversationState | null=null;
   const actions=new Map<string, THREE.AnimationAction>(), lip: Partial<Record<string, number>>={}, clipMorphs: number[][]=[];
   const reduced=matchMedia('(prefers-reduced-motion: reduce)');
+  const phoneView=matchMedia('(max-width: 700px)');
   const desktopView=matchMedia('(min-width: 1001px)');
   // Adds on top of what the gesture clips wrote this frame.
   function morph(name: string,value: number) { for (const mesh of heads) { const i=mesh.morphTargetDictionary?.[name]; if (i!==undefined && mesh.morphTargetInfluences) mesh.morphTargetInfluences[i]=THREE.MathUtils.clamp(mesh.morphTargetInfluences[i]+value,0,1); } }
@@ -328,16 +335,25 @@ export function mountKelly(host: HTMLElement, options: ViewOptions) {
     if (gesturing()) return;
     if (sinceYawn>45 && Math.random()<.2) { sinceYawn=0; play('yawn'); } else play('nod');
   }
+  // The host's last size and page position: when only its height changes (the start screen hands over to the
+  // conversation), Kelly keeps her size and place on the page for that frame and then glides to the new framing.
+  let lastHost: { width: number; height: number; top: number } | undefined;
   function resize() {
     if (disposed) return;
-    const width=host.clientWidth || 1,height=host.clientHeight || 1;
+    const width=host.clientWidth || 1,height=host.clientHeight || 1,top=host.getBoundingClientRect().top+scrollY;
+    const glide=!!size && !!options.portrait && !!lastHost && lastHost.width===width && lastHost.height!==height && !reduced.matches;
+    if (glide) {
+      camera.position.z*=height/lastHost!.height;
+      viewShift+=top-lastHost!.top+(height-lastHost!.height)/2;
+    }
+    lastHost={ width,height,top };
     topBleed=options.portrait && desktopView.matches ? Math.ceil(height*.4) : 0;
     camera.aspect=width/height; camera.updateProjectionMatrix();
     const viewport=portraitViewport(height,viewShift,topBleed);
     renderer.setSize(width,viewport.renderHeight);
     Object.assign(renderer.domElement.style,{position:'absolute',top:`${-topBleed}px`,width:'100%',height:`${viewport.renderHeight}px`});
     if (size) {
-      if (options.portrait) fitPortrait(null);
+      if (options.portrait) fitPortrait(glide ? 0 : null);
       else {
         const angle=Math.tan(THREE.MathUtils.degToRad(camera.fov)/2), halfHeight=.95,halfWidth=size.x/size.y*halfHeight;
         const distance=Math.max(halfHeight/angle,halfWidth/(angle*camera.aspect))*1.14+size.z/size.y;
@@ -371,7 +387,12 @@ export function mountKelly(host: HTMLElement, options: ViewOptions) {
     // Once the intro leaves on desktop, frame the face and bust as the subject.
     // The decorative halo may extend outside the frame instead of shrinking Kelly.
     const focusAvatar=bottomAnchored && desktopView.matches;
-    const { distance, viewShift: shift }=portraitFrame({ width,height,headroom,visibleBottom,tan,designDistance,eyeLevel,
+    // Above the button, leave a band for the chest: Kelly sits higher and her torso shows before it fades out.
+    const covered=Math.max(0,options.getFootroom?.() ?? 0), chest=covered ? Math.min(40,height*.05) : 0, footroom=bottomAnchored ? 0 : covered+chest;
+    // Pixels from the canvas bottom up to the page content below Kelly: the stylesheet fades her bust out above it.
+    const fadeBottom=`${Math.round(covered+Math.max(0,rect.bottom-innerHeight))}px`;
+    if (host.style.getPropertyValue('--fade-bottom')!==fadeBottom) host.style.setProperty('--fade-bottom',fadeBottom);
+    const { distance, viewShift: shift }=portraitFrame({ width,height,headroom,visibleBottom,tan,designDistance,eyeLevel,footroom,
       bottomAnchored, bottomCrop:focusAvatar ? Math.min(96,height*.14) : 0,
       points:[{ x:0,y:headClearance,z:0 },{ x:0,y:bottomAnchored ? -.95 : neckLine,z:0 },...(looks[currentLook]?.crown && !focusAvatar ? crownPortraitPoints : [])] });
     camera.position.y=eyeLevel;
@@ -411,7 +432,7 @@ export function mountKelly(host: HTMLElement, options: ViewOptions) {
     stage.rotation.y=reduced.matches ? 0 : Math.sin(seconds*.3)*.02;
     material.envMapRotation.y=reduced.matches ? 0 : Math.sin(seconds*.16)*.12;
     rimFire.time.value=reduced.matches ? 0 : seconds;
-    if (crown) crown.setPortal(options.getTheme?.()==='light');
+    if (crown) { crown.setPortal(options.getTheme?.()==='light'); crown.setPortalScale(phoneView.matches ? 1.22 : 1); }
     if (crown && looks[currentLook]?.crown) {
       scene.updateMatrixWorld(); crown.update(reduced.matches ? 0 : seconds);
       for (const [uniform,plane] of [[cutLow,crown.planes[0]],[cutHigh,crown.planes[1]]] as const) uniform.value.set(plane.normal.x,plane.normal.y,plane.normal.z,plane.constant);
@@ -472,10 +493,25 @@ export function mountKelly(host: HTMLElement, options: ViewOptions) {
         clips:[...actions].filter(([,action])=>action.isScheduled()).map(([name,action])=>`${name}:${action.getEffectiveWeight().toFixed(2)}`),
         expressions:Object.entries(heads[0].morphTargetDictionary ?? {}).map(([name,i])=>[name,heads[0].morphTargetInfluences![i]] as const).filter(([,value])=>value>.01) })});
     const bust=new THREE.Group(); bust.add(avatar);
-    const bounds=new THREE.Box3().setFromObject(bust,true); size=bounds.getSize(new THREE.Vector3());
+    const bounds=new THREE.Box3().setFromObject(bust,true);
+    // The torso continues below where the bust used to end (marked by FramingBottom); scale and framing keep using the
+    // original bust, so the head, the crown and every framing constant stay where they were.
+    const floor=avatar.getObjectByName('FramingBottom');
+    if (floor) { bust.updateMatrixWorld(true); bounds.min.y=floor.getWorldPosition(new THREE.Vector3()).y; }
+    size=bounds.getSize(new THREE.Vector3());
     bust.position.copy(bounds.getCenter(new THREE.Vector3())).negate(); stage.add(bust); stage.scale.setScalar(1.9/size.y);
     crown=createCrown(stage,avatar.getObjectByName('head')!); applyLook(currentLook);
     if (memoryCount!==null) crown.setMemories(memoryCount);
+    const ray=new THREE.Raycaster(), centre=new THREE.Vector3();
+    options.onBrainProbe?.((clientX,clientY)=>{
+      if (!crown || !looks[currentLook]?.crown) return null;
+      const rect=renderer.domElement.getBoundingClientRect();
+      if (!rect.width || !rect.height) return null;
+      ray.setFromCamera(new THREE.Vector2((clientX-rect.left)/rect.width*2-1,-((clientY-rect.top)/rect.height)*2+1),camera);
+      if (!crown.hitBrain(ray)) return null;
+      crown.brainCentre(centre).project(camera);
+      return { x:rect.left+(centre.x+1)/2*rect.width, y:rect.top+(1-centre.y)/2*rect.height };
+    });
     resize(); options.onReady?.(); lastTime=performance.now(); if(!document.hidden)frame=requestAnimationFrame(draw);
   }).catch(()=>{if(!disposed)options.onError();});
   return () => {

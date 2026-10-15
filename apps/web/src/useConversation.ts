@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { recallKey, type Recall } from './brain/layout';
 import { maxRecordingBytes, parseServerEvent, type ClientCommand, type ConversationState, type Usage } from '../../../shared/protocol';
 import { quietPeak, recordMicrophone, type Recording } from './recorder';
 import type { AvatarPlayback, PhonemeCue } from '../../../shared/lip-sync';
@@ -18,6 +19,8 @@ export function useConversation() {
   const [needsPlayback, setNeedsPlayback] = useState(false);
   const [usage, setUsage] = useState<Usage | null>(null);
   const [waking, setWaking] = useState(false);
+  // Memories the server used for the latest answer, keyed by subject slot and text.
+  const [recall, setRecall] = useState<Recall | null>(null);
   const wakeTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const socketRef = useRef<WebSocket | null>(null);
   const recorderRef = useRef<Recording | null>(null);
@@ -98,6 +101,7 @@ export function useConversation() {
         if (!event) { setError('Recebemos uma mensagem inválida.'); return; }
         if (event.type === 'error') { setError(event.message); setSubmitting(false); return; }
         if (event.type === 'usage') { setUsage(event.usage); return; }
+        if (event.type === 'recall') { setRecall({ keys: new Set(event.memories.map(({ slot, value }) => recallKey(slot, value))), at: Date.now() }); return; }
         if (event.type === 'transcript') { setTranscript(event.text); return; }
         if (event.type === 'audio-output') { expectingAudio = true; phonemes = event.phonemes ?? []; gestures = event.gestures ?? []; return; }
         setState(event.state); setText(event.text); setSubmitting(false);
@@ -146,5 +150,5 @@ export function useConversation() {
     } finally { if (current === generation.current) { startingRef.current = false; setStarting(false); } }
   }
   function finishRecording() { recorderRef.current?.finish(); }
-  return { state, connection, mode, model, text, transcript, error, send, waking, recording, starting, submitting, needsPlayback, usage, playbackRef, startRecording, finishRecording, playAnswer };
+  return { state, connection, mode, model, text, transcript, error, send, waking, recording, starting, submitting, needsPlayback, usage, recall, playbackRef, startRecording, finishRecording, playAnswer };
 }

@@ -1,0 +1,42 @@
+/* The brain view opens as a circle growing out of Kelly's brain and closes back into it. Always the night sky of the
+   violet look, whatever the page theme, so the points of light keep their contrast. */
+.brain-view { position: fixed; inset: 0; z-index: 1000; color: #efe7ff; background: radial-gradient(ellipse at 50% 45%, #2a1650 0, #150b2c 55%, #08040f 100%);
+  clip-path: circle(150vmax at var(--origin-x) var(--origin-y)); animation: brain-open .9s cubic-bezier(.6, 0, .2, 1) both; font-size: 14px; }
+.brain-view.closing { clip-path: circle(0 at var(--origin-x) var(--origin-y)); transition: clip-path .55s cubic-bezier(.6, 0, .4, 1); }
+@keyframes brain-open { from { clip-path: circle(0 at var(--origin-x) var(--origin-y)); } }
+.brain-scene { position: absolute; inset: 0; }
+.brain-scene canvas { display: block; width: 100%; height: 100%; cursor: grab; touch-action: none; }
+.brain-scene canvas:active { cursor: grabbing; }
+.brain-header { position: absolute; top: 0; left: 0; right: 0; display: flex; justify-content: space-between; align-items: flex-start; padding: 22px 28px; pointer-events: none; }
+.brain-header h2 { margin: 0; font-size: 22px; font-weight: 500; letter-spacing: -.4px; }
+.brain-header p { margin: 4px 0 0; font-size: 12px; letter-spacing: .6px; color: #b9a6e4; }
+.brain-close { pointer-events: auto; width: 40px; height: 40px; display: grid; place-items: center; border-radius: 50%; border: 1px solid #ffffff26; background: #ffffff0d; color: inherit; cursor: pointer; transition: background .2s ease; }
+.brain-close:hover { background: #ffffff1f; }
+.brain-close svg { width: 18px; height: 18px; }
+.brain-message { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); margin: 0; width: min(340px, calc(100vw - 48px)); text-align: center; line-height: 1.6; color: #d8cbf5; pointer-events: none; }
+.brain-message button { pointer-events: auto; display: block; margin: 12px auto 0; font: inherit; color: inherit; background: #ffffff14; border: 1px solid #ffffff2e; border-radius: 999px; padding: 6px 16px; cursor: pointer; }
+/* The card follows its point (--x, --y set every frame), sitting just above it. */
+.brain-card { position: absolute; left: 0; top: 0; transform: translate(var(--x, -999px), var(--y, -999px)); width: max-content; max-width: min(300px, calc(100vw - 32px));
+  padding: 12px 15px; border-radius: 14px; background: #1b0f35e6; border: 1px solid #c4a6ff40; box-shadow: 0 12px 40px #0008; backdrop-filter: blur(8px); pointer-events: none; animation: brain-card-in .2s ease both; }
+.brain-card.pinned { border-color: #c4a6ff80; }
+/* Hovering shows a preview; a tap pins the card with the whole memory. */
+.brain-card:not(.pinned) p { display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; }
+@keyframes brain-card-in { from { opacity: 0; } }
+.brain-card p { margin: 6px 0; line-height: 1.45; font-size: 14px; }
+.brain-card small { font-size: 11px; color: #ad9bd6; }
+.brain-card-subject { display: flex; align-items: center; gap: 7px; font-size: 10px; letter-spacing: 1.2px; text-transform: uppercase; color: #c9b8ef; }
+.brain-card-subject i, .brain-subjects i { width: 8px; height: 8px; border-radius: 50%; box-shadow: 0 0 8px currentColor; flex: none; }
+.brain-footer { position: absolute; left: 0; right: 0; bottom: 0; padding: 0 24px 20px; text-align: center; pointer-events: none; }
+.brain-subjects { list-style: none; margin: 0 auto 12px; padding: 0; display: flex; flex-wrap: wrap; justify-content: center; gap: 6px 14px; max-width: 760px; }
+.brain-subjects li { display: flex; align-items: center; gap: 6px; font-size: 12px; color: #d9ccf6; }
+.brain-subjects span { color: #8f7db8; }
+.brain-footer p { margin: 0; font-size: 11px; letter-spacing: .4px; color: #8f7db8; }
+.brain-footer .brain-credit { margin-top: 6px; font-size: 10px; color: #6f5f96; }
+.brain-footer a { pointer-events: auto; color: #c9b0ff; text-decoration: none; }
+.brain-footer a:hover { text-decoration: underline; }
+@media (max-width: 700px) {
+  .brain-header { padding: 16px 18px; }
+  .brain-subjects { gap: 4px 10px; }
+  .brain-subjects li { font-size: 11px; }
+}
+@media (prefers-reduced-motion: reduce) { .brain-view, .brain-view.closing { animation: none; transition: none; } }

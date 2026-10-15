@@ -1,6 +1,6 @@
 import Fastify from 'fastify';
 import websocket from '@fastify/websocket';
-import { maxRecordingBytes, parseAudioInput, parseClientCommand, type AudioInput, type ConversationState, type ServerEvent, type Usage } from '../../../shared/protocol.ts';
+import { maxRecalled, maxRecordingBytes, parseAudioInput, parseClientCommand, type AudioInput, type ConversationState, type ServerEvent, type Usage } from '../../../shared/protocol.ts';
 import { extractGestures } from '../../../shared/gestures.ts';
 import { openaiTranscriptionModel, type Message, type VoiceProvider } from './voice.ts';
 import { randomUUID } from 'node:crypto';
@@ -177,6 +177,8 @@ export async function createApp(options: { voice?: VoiceProvider; memory?: Memor
         phase = 'context';
         const context = options.memory ? await options.memory.load(transcript.text, active.signal) : undefined;
         if (!valid()) return;
+        if (context) send({ type: 'recall', memories: context.relevant.filter((item) => item.status === 'known')
+          .slice(0, maxRecalled).map(({ slot, value }) => ({ slot, value })) });
         started = Date.now();
         phase = 'proposal';
         const answer = await voice.reply([...(context?.recent ?? history),

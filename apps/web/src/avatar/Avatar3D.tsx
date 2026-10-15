@@ -1,17 +1,22 @@
 import { useEffect, useRef, useState, type RefObject } from 'react';
-import { mountKelly } from './kelly';
+import { mountKelly, type BrainProbe } from './kelly';
 import type { AvatarPlayback } from '../../../../shared/lip-sync';
 import type { ConversationState } from '../../../../shared/protocol';
 // Spacing between the page text and the top of Kelly's head, in pixels.
 const textGap=16;
-export default function Avatar3D({ playbackRef, state, recording, clearOf, theme, bottomAnchored }: { playbackRef: RefObject<AvatarPlayback | null>; state: ConversationState; recording: boolean; clearOf: RefObject<HTMLElement | null>; theme: 'light' | 'dark'; bottomAnchored: boolean }) {
-  const host=useRef<HTMLDivElement>(null),stateRef=useRef(state),recordingRef=useRef(recording),themeRef=useRef(theme),bottomRef=useRef(bottomAnchored);
+export default function Avatar3D({ playbackRef, state, recording, clearOf, theme, brainProbe, clearBelow, holdLayout = false }: { playbackRef: RefObject<AvatarPlayback | null>; state: ConversationState; recording: boolean; clearOf: RefObject<HTMLElement | null>; theme: 'light' | 'dark'; brainProbe?: RefObject<BrainProbe | null>; clearBelow?: RefObject<HTMLElement | null>; holdLayout?: boolean }) {
+  const host=useRef<HTMLDivElement>(null),stateRef=useRef(state),recordingRef=useRef(recording),themeRef=useRef(theme);
+  // Space taken by the start screen's copy above and button below, held from the moment they start to leave: Kelly keeps the same
+  // size and place when she wakes, and only the text and the button go away.
+  const reserved=useRef({ above:0,below:0 }),holdRef=useRef(holdLayout); holdRef.current=holdLayout;
   const [ready,setReady]=useState(false),[failed,setFailed]=useState(false);
-  stateRef.current=state; recordingRef.current=recording; themeRef.current=theme; bottomRef.current=bottomAnchored;
+  stateRef.current=state; recordingRef.current=recording; themeRef.current=theme;
   useEffect(()=>{
     if(!host.current)return;
-    try { return mountKelly(host.current,{getPlayback:()=>playbackRef.current,getState:()=>stateRef.current,getRecording:()=>recordingRef.current,getTheme:()=>themeRef.current,getBottomAnchored:()=>bottomRef.current,
-      getHeadroom:()=>clearOf.current && host.current ? clearOf.current.getBoundingClientRect().bottom-host.current.getBoundingClientRect().top+textGap : 0,portrait:true,onReady:()=>setReady(true),onError:()=>setFailed(true)}); }
+    try { return mountKelly(host.current,{getPlayback:()=>playbackRef.current,getState:()=>stateRef.current,getRecording:()=>recordingRef.current,getTheme:()=>themeRef.current,
+      getHeadroom:()=>{ const above=clearOf.current, frame=host.current; if (above && frame && !holdRef.current) reserved.current.above=above.getBoundingClientRect().bottom-frame.getBoundingClientRect().top+textGap; return reserved.current.above; },
+      getFootroom:()=>{ const below=clearBelow?.current, frame=host.current; if (below && frame && !holdRef.current) reserved.current.below=Math.min(frame.getBoundingClientRect().bottom,innerHeight)-below.getBoundingClientRect().top+textGap; return reserved.current.below; },
+      portrait:true,onReady:()=>setReady(true),onBrainProbe:(probe)=>{ if (brainProbe) brainProbe.current=probe; },onError:()=>setFailed(true)}); }
     catch { setFailed(true); }
   },[playbackRef]);
   // Kelly fades in once loaded; the still image only stands in when 3D is unavailable.

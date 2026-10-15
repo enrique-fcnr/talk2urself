@@ -111,3 +111,14 @@ test('a área extra mostra o topo do portal sem mudar a escala nem a posição d
   const shown=portal.project(camera);
   assert.ok(shown.y<=1 && shown.y>=-1,'the portal top now lies inside the expanded render surface');
 });
+
+test('com um botão embaixo, a cena cabe entre o texto e o botão e fica centralizada', () => {
+  const points = [...face, ...crownPortraitPoints];
+  for (const [width, height, headroom, visibleBottom, footroom] of [[1100, 700, 160, 700, 130], [375, 600, 190, 600, 120]]) {
+    const frame = portraitFrame({ width, height, headroom, visibleBottom, tan, eyeLevel, designDistance: 3.1, points, footroom });
+    const ys = points.map((point) => height / 2 - (point.y - eyeLevel) * height / (2 * (frame.distance - point.z) * tan) - frame.viewShift);
+    const top = Math.min(...ys), bottom = Math.max(...ys);
+    assert.ok(top >= headroom - .001 && bottom <= visibleBottom - footroom + .001, 'scene must stay between the copy and the button');
+    assert.ok(Math.abs((top - headroom) - (visibleBottom - footroom - bottom)) < 1, 'scene must be centred in the free space');
+  }
+});

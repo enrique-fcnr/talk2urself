@@ -23,6 +23,11 @@ export type Crown = {
   setMemories(count: number): void;
   // A dark night-sky circle behind the disc, for light pages; the scene itself stays as on the dark theme.
   setPortal(on: boolean): void;
+  // Grow the portal (1 = framing the disc); on phones it is enlarged into a night backdrop that runs past the edges.
+  setPortalScale(scale: number): void;
+  // Whether a ray from the camera touches the brain (with a little slack, so the slot is easy to tap), and where its centre is.
+  hitBrain(ray: THREE.Raycaster): boolean;
+  brainCentre(target: THREE.Vector3): THREE.Vector3;
   dispose(): void;
 };
 
@@ -32,7 +37,7 @@ const cut = { point: new THREE.Vector3(0, .6, 0), normal: new THREE.Vector3(0, -
 // Memories at which the brain reaches full brightness. The curve is logarithmic, so the first ones show the most.
 export const fullBrainMemories = 100;
 export const brainLevel = (count: number) => Math.min(1, Math.log1p(Math.max(0, count)) / Math.log1p(fullBrainMemories));
-const brain = { centre: new THREE.Vector3(0, .66, -.06), radii: new THREE.Vector3(.27, .21, .3) };
+export const brain = { centre: new THREE.Vector3(0, .66, -.06), radii: new THREE.Vector3(.27, .21, .3) };
 const orbit = { centre: new THREE.Vector3(0, .8, -.04), radius: .62, tilt: new THREE.Euler(.16, 0, -.12) };
 const spheres = [
   { size: .07, speed: .45, phase: 0 }, { size: .05, speed: .45, phase: 1.3 }, { size: .062, speed: .45, phase: 2.5 },
@@ -149,6 +154,8 @@ export function createCrown(stage: THREE.Object3D, head: THREE.Object3D): Crown 
   const cortex = new THREE.Mesh(brainGeometry(), glow);
   cortex.position.copy(brain.centre); root.add(cortex); cortex.updateMatrixWorld(true); head.attach(cortex);
 
+  const hitSphere = new THREE.Sphere(), hitScale = new THREE.Vector3(), hitRadius = Math.max(brain.radii.x, brain.radii.y, brain.radii.z) * 1.15;
+
   const ring = new THREE.Group(); ring.position.copy(orbit.centre); ring.rotation.copy(orbit.tilt);
   root.add(ring); ring.updateMatrixWorld(true); head.attach(ring);
   const skin = new THREE.MeshPhysicalMaterial({ color: 0x2b1747, roughness: .55, sheen: .8, sheenColor: new THREE.Color(0x8a5ce8) });
@@ -174,6 +181,13 @@ export function createCrown(stage: THREE.Object3D, head: THREE.Object3D): Crown 
     },
     setVisible(visible) { disc.visible = cortex.visible = ring.visible = visible; portal.visible = visible && portalWanted; },
     setPortal(on) { portalWanted = on; portal.visible = on && disc.visible; },
+    setPortalScale(scale) { portal.scale.setScalar(scale); },
+    hitBrain(ray) {
+      if (!cortex.visible) return false;
+      cortex.getWorldPosition(hitSphere.center); hitSphere.radius = hitRadius * cortex.getWorldScale(hitScale).x;
+      return ray.ray.intersectsSphere(hitSphere);
+    },
+    brainCentre(target) { return cortex.getWorldPosition(target); },
     setMemories(count) {
       if (known !== null && count > known) flash = 1;
       known = count; targetLevel = brainLevel(count);

@@ -127,44 +127,40 @@ h1 { font-size: clamp(23px, 2.6vw, 35px); line-height: 1.3; letter-spacing: -1.1
 .start-personal { display: block; white-space: nowrap; }
 .rotating-word { display: inline-block; color: var(--accent); animation: word-in .55s ease both; }
 @keyframes word-in { from { opacity: 0; transform: translateY(.35em); filter: blur(4px); } to { opacity: 1; transform: none; filter: none; } }
-.start-hint { font-size: 11px; letter-spacing: 1.6px; text-transform: uppercase; color: var(--faint); animation: pulse 2.6s ease-in-out infinite; }
-.app { --usage-width: clamp(250px, 24vw, 330px); --usage-inset: clamp(24px, 3.2vw, 56px); }
-.usage-cards { position: absolute; left: var(--usage-inset); right: var(--usage-inset); top: 46%; transform: translateY(-50%); display: flex; justify-content: space-between; gap: 24px; text-align: left; }
-.usage-card { --card-accent: #9471d6; --card-surface: #ffffff6b; --card-tint: #ece3fc59; --card-edge: #aa90d82e; width: var(--usage-width); position: relative; overflow: hidden; display: grid; grid-template-columns: 22px minmax(0, 1fr); align-items: center; gap: 16px; padding: 22px 24px; border: 1px solid var(--card-edge); border-radius: 24px; background: linear-gradient(115deg, var(--card-surface), var(--card-tint)); backdrop-filter: blur(16px); box-shadow: 0 8px 32px #57377c06, inset 0 1px 0 #ffffff66; }
-.usage-card:nth-child(2) { --card-accent: #8a80ca; }
-.app[data-theme='dark'] .usage-card { --card-accent: #c0a2f4; --card-surface: #27203359; --card-tint: #46315e38; --card-edge: #c6a9fa29; box-shadow: 0 8px 32px #0000000d, inset 0 1px 0 #ffffff0a; }
-.app[data-theme='dark'] .usage-card:nth-child(2) { --card-accent: #b2a4ed; }
-.usage-card::before { content: ''; position: absolute; top: 0; left: 24px; right: 24px; height: 1px; background: linear-gradient(90deg, transparent, var(--card-accent), transparent); opacity: .25; pointer-events: none; }
-.usage-card::after { content: ''; position: absolute; width: 2px; top: 24%; bottom: 24%; right: 0; background: linear-gradient(transparent, var(--card-accent), transparent); opacity: .45; pointer-events: none; }
-.usage-card:nth-child(2)::after { right: auto; left: 0; }
-.usage-signal { display: block; position: relative; width: 22px; height: 22px; color: var(--card-accent); }
-.usage-signal i { position: absolute; border-radius: 50%; border: 1px solid currentColor; }
-.usage-signal i:first-child { width: 6px; height: 6px; left: 8px; top: 8px; border: 0; background: currentColor; box-shadow: 0 0 12px var(--card-accent); }
-.usage-signal i:nth-child(2) { inset: 3px; opacity: .4; }
-.usage-signal i:nth-child(3) { inset: 0; opacity: .15; }
-.usage-copy-stack { display: grid; position: relative; min-width: 0; }
-.usage-card p { color: var(--muted); font-size: 14px; line-height: 1.6; letter-spacing: -.1px; margin: 0; }
-.usage-copy-stack > p { grid-area: 1 / 1; }
-.usage-copy-sizer { visibility: hidden; }
-.usage-phrase { animation: feature-in .65s ease both; }
-@keyframes feature-in { from { opacity: 0; transform: translateY(5px); filter: blur(2px); } to { opacity: 1; transform: translateY(0); filter: none; } }
+/* Under the headline: one line on what it is, three small promises. Hidden until we know whether to greet a returning visitor. */
+.start-content[data-ready='false'] .start-copy { opacity: 0; }
+.start-copy { transition: transform .65s ease, opacity .4s ease; }
+.start-lede { max-width: 440px; font-size: clamp(14px, 1.3vw, 16px); line-height: 1.55; color: var(--muted); }
+.start-lede strong { color: var(--accent); font-weight: 600; }
+.start-promises { list-style: none; margin: 4px 0 0; padding: 0; display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; }
+.start-promises li { font-size: 12px; padding: 5px 12px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); background: var(--glass); backdrop-filter: blur(10px); }
+/* The call to action sits in the thumb zone, over the fading bottom of the bust. */
+.start-actions { position: absolute; left: 0; right: 0; bottom: max(20px, env(safe-area-inset-bottom)); z-index: 1; display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 0 24px; transition: opacity .65s ease, transform .65s ease; }
+.start-screen.leaving .start-actions { opacity: 0; transform: translateY(12px); }
+.wake-button { min-height: 48px; display: inline-flex; align-items: center; gap: 10px; padding: 0 26px; border: 0; border-radius: 999px; font: inherit; font-size: 15px; font-weight: 500; color: #fff; background: var(--accent); box-shadow: 0 10px 30px #7e58cb40; cursor: pointer; transition: transform .2s ease, box-shadow .2s ease; animation: wake-breathe 3.2s ease-in-out infinite; }
+.wake-button:hover { transform: translateY(-1px); box-shadow: 0 14px 36px #7e58cb55; }
+.wake-button:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.wake-button svg { width: 18px; height: 18px; }
+@keyframes wake-breathe { 50% { box-shadow: 0 10px 40px #7e58cb66; } }
+.start-note { margin: 0; max-width: 380px; text-align: center; font-size: 11px; line-height: 1.5; color: var(--faint); }
+.app[data-theme='dark'] .wake-button { background: #9d7be6; box-shadow: 0 10px 30px #00000055; }
 @media (min-width: 1001px) {
   .avatar-stage { height: clamp(420px, 88svh, 1000px); }
   .avatar { overflow: visible; }
 }
-@media (max-width: 1000px) {
-  .usage-cards { position: static; transform: none; margin: 20px auto 0; max-width: 620px; display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
-  .usage-card { width: auto; min-width: 0; padding: 16px 20px; border-radius: 18px; }
-  .usage-card p { font-size: 12px; line-height: 1.5; }
-}
 @media (max-width: 700px) {
   .start-screen { padding-left: 16px; padding-right: 16px; }
-  .usage-cards { grid-template-columns: 1fr; gap: 8px; margin-top: 16px; }
-  .usage-card { padding: 14px 18px; border-radius: 16px; }
+  .start-title { font-size: 24px; letter-spacing: -.6px; }
+  .start-lede { font-size: 13px; max-width: 300px; }
+  .start-promises li { font-size: 11px; padding: 4px 10px; }
+  .start-note { max-width: 300px; }
 }
+/* Short phones: the promises go first, so the headline, Kelly and the button still fit. */
+@media (max-height: 640px) { .start-promises { display: none; } .start-note { font-size: 10px; } }
 /* Clean screen: only Kelly and, at the top right, the gear and theme buttons. */
 .app[data-started='true'] .header { justify-content: flex-end; border-bottom-color: transparent; }
 .avatar:not(:disabled) { cursor: pointer; }
+.avatar[aria-disabled='true']:not([data-over-brain='true']) { cursor: default; }
 /* While recording, the light around her breathes so the user knows she is listening. */
 .app[data-recording='true'] .halo { animation: listening 1.6s ease-in-out infinite; }
 @keyframes listening { 50% { opacity: .55; transform: translateX(-50%) scale(1.04); } }
@@ -197,4 +193,13 @@ h1 { font-size: clamp(23px, 2.6vw, 35px); line-height: 1.3; letter-spacing: -1.1
 @media (max-width: 700px) {
   .start-screen { padding-top: 2.5svh; }
   .character-status { right: 16px; bottom: max(16px, env(safe-area-inset-bottom)); padding: 10px 14px; gap: 9px; font-size: 11px; }
+}
+/* The stage spans the whole page under the header, so Kelly sits centred between the headline and the wake button,
+   and keeps that size and place once she is awake. */
+.app .avatar-stage { top: 0; height: auto; }
+/* The bust dissolves before it reaches the wake button's place, so the end of the body never shows.
+   --fade-bottom (set by the avatar) is the distance from the canvas bottom to the button area. */
+.app .avatar-3d canvas {
+  -webkit-mask-image: linear-gradient(to top, transparent calc(var(--fade-bottom, 0px) + 4px), #000 calc(var(--fade-bottom, 0px) + 130px));
+  mask-image: linear-gradient(to top, transparent calc(var(--fade-bottom, 0px) + 4px), #000 calc(var(--fade-bottom, 0px) + 130px));
 }

@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "node scripts/dev.mjs",
     "check": "tsc --noEmit",
-    "test": "node --import tsx --test apps/server/src/app.test.ts apps/server/src/voice.test.ts apps/server/src/speech-timing.test.ts apps/server/src/memory.test.ts apps/server/src/language-worker.test.ts apps/web/src/recorder.test.ts apps/web/src/vectors/projection.test.ts shared/gestures.test.ts apps/web/src/avatar/crown.test.ts apps/web/src/avatar/portrait.test.ts",
+    "test": "node --import tsx --test apps/server/src/app.test.ts apps/server/src/voice.test.ts apps/server/src/speech-timing.test.ts apps/server/src/memory.test.ts apps/server/src/language-worker.test.ts apps/web/src/recorder.test.ts apps/web/src/vectors/projection.test.ts apps/web/src/brain/layout.test.ts shared/gestures.test.ts apps/web/src/avatar/crown.test.ts apps/web/src/avatar/portrait.test.ts",
     "build": "npm run check && vite build apps/web"
   },
   "dependencies": {

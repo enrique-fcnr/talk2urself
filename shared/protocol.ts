@@ -10,10 +10,14 @@ export const audioMimeTypes = ['audio/webm;codecs=opus', 'audio/webm', 'audio/og
 export type AudioInput = { type: 'audio-input'; mime: string; seconds: number };
 export type Usage = { turns: number; sttSeconds: number; ttsCharacters: number; inputTokens: number; outputTokens: number; cachedTokens: number };
 export type Health = { ok: true; mode: 'demo' | 'voice'; model: string | null };
+// Saved facts the server pulled in to answer the current question; the brain view lights them up.
+export type RecalledMemory = { slot: string; value: string };
+export const maxRecalled = 20;
 export type ServerEvent =
   | { type: 'state'; state: ConversationState; text: string }
   | { type: 'transcript'; text: string }
   | { type: 'audio-output'; mime: 'audio/wav'; phonemes?: PhonemeCue[]; gestures?: GestureCue[] }
+  | { type: 'recall'; memories: RecalledMemory[] }
   | { type: 'usage'; usage: Usage }
   | { type: 'error'; message: string };
 
@@ -59,6 +63,10 @@ export function parseServerEvent(raw: string): ServerEvent | null {
         .every((key) => typeof usage[key] === 'number' && Number.isFinite(usage[key]) && usage[key] >= 0)) {
         return { type: 'usage', usage: usage as Usage };
       }
+    }
+    if (value.type === 'recall' && Array.isArray(value.memories) && value.memories.length <= maxRecalled &&
+      value.memories.every((item) => isRecord(item) && typeof item.slot === 'string' && item.slot.length <= 60 && typeof item.value === 'string' && item.value.length <= 600)) {
+      return { type: 'recall', memories: value.memories.map((item) => ({ slot: String(item.slot), value: String(item.value) })) };
     }
     if (value.type === 'error' && typeof value.message === 'string') {
       return { type: 'error', message: value.message };

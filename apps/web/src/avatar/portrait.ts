@@ -6,13 +6,15 @@ export function portraitViewport(height: number, viewShift: number, topBleed = 0
   return { renderHeight: height + topBleed, offsetY: viewShift - topBleed };
 }
 type PortraitLayout = { width: number; height: number; headroom: number; visibleBottom: number;
-  tan: number; designDistance: number; eyeLevel: number; points: readonly PortraitPoint[]; bottomAnchored?: boolean; bottomCrop?: number };
+  tan: number; designDistance: number; eyeLevel: number; points: readonly PortraitPoint[]; bottomAnchored?: boolean; bottomCrop?: number;
+  // Pixels at the bottom covered by page content (a call to action); the scene fits and centres between it and the copy.
+  footroom?: number };
 
 // Fit the visible scene, including decorations behind the face, below the copy.
 // Points at different depths must be projected before their extents are compared.
 export function portraitFrame(layout: PortraitLayout) {
   const { width, height, headroom, visibleBottom, tan, designDistance, eyeLevel, points } = layout;
-  const available = Math.max(1, visibleBottom - headroom);
+  const footroom = Math.max(0, layout.footroom ?? 0), available = Math.max(1, visibleBottom - footroom - headroom);
   const extentAt = (distance: number) => {
     const scale = height / (2 * distance * tan);
     const ys = points.map(point => (point.y - eyeLevel) * distance / (distance - point.z));
@@ -35,6 +37,7 @@ export function portraitFrame(layout: PortraitLayout) {
   }
   const extent = extentAt(distance), clearance = eyeLevel + extent.upper;
   const top = layout.bottomAnchored ? visibleBottom + Math.max(0, layout.bottomCrop ?? 0) - (extent.upper - extent.lower) * extent.scale
+    : footroom ? headroom + Math.max(0, available - (extent.upper - extent.lower) * extent.scale) / 2
     : Math.max(headroom, (.04 + distance * tan - clearance) * extent.scale);
   const viewShift = height / 2 - extent.upper * extent.scale - top;
   return { distance, viewShift };

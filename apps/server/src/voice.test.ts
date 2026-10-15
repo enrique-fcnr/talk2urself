@@ -225,7 +225,7 @@ test('despertar fala primeiro, preserva contexto no turno real e não grava usu�
   assert.equal((await channel.next()).type, 'audio-output'); assert.ok(await channel.next() instanceof ArrayBuffer);
   assert.equal(saves, 0);
   channel.command('playback-ended'); assert.equal((await channel.next()).text, 'Qual é meu nome?');
-  channel.audio(); for (let i = 0; i < 8; i++) await channel.next();
+  channel.audio(); for (let i = 0; i < 9; i++) await channel.next();
   assert.deepEqual(answerHistory, [{ role: 'assistant', content: 'Qual é meu nome?' }, { role: 'user', content: 'Meu nome é Henrique.' }]);
   assert.equal(saves, 1);
   channel.command('reset'); assert.equal((await channel.next()).state, 'idle');
@@ -351,7 +351,7 @@ test('falha de gravação da memória libera o turno e não afirma continuidade 
   t.after(() => observer.close());
   t.after(async () => { await channel.close(); await app.close(); });
   await channel.opened; await channel.next(); channel.command('start'); await channel.next(); channel.audio();
-  for (let packet = 0; packet < 5; packet++) await channel.next();
+  for (let packet = 0; packet < 6; packet++) await channel.next();
   assert.equal((await channel.next()).type, 'error'); assert.equal((await channel.next()).state, 'listening');
   assert.equal(released, true);
   await delay(20);
