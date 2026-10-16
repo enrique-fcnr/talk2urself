@@ -8,19 +8,21 @@ import type { MemoryService } from './memory.ts';
 import type { WebSocket } from 'ws';
 import { emitDiagnostic, type DiagnosticSink, type DiagnosticStage, type MemoryDiagnosticRecord } from './memory-diagnostics.ts';
 import { createLanguageWorker } from './language-worker.ts';
+import { originAllowed, registerWeb } from './access.ts';
 
-export async function createApp(options: { voice?: VoiceProvider; memory?: MemoryService; onUsage?: (record: Record<string, string | number>) => void; onMemoryDiagnostic?: (record: MemoryDiagnosticRecord) => void } = {}) {
-  const app = Fastify({ logger: false });
+// webRoot: serve the built web app from there (production).
+export async function createApp(options: { voice?: VoiceProvider; memory?: MemoryService; onUsage?: (record: Record<string, string | number>) => void; onMemoryDiagnostic?: (record: MemoryDiagnosticRecord) => void; webRoot?: string } = {}) {
+  const app = Fastify({ logger: false, trustProxy: true });
   await app.register(websocket, { options: { maxPayload: maxRecordingBytes } });
+  if (options.webRoot) registerWeb(app, options.webRoot);
   const viewers = new Set<WebSocket>();
   const notifyMemories = () => { for (const viewer of viewers) if (viewer.readyState === 1) viewer.send(JSON.stringify({ type: 'memory-sync' })); };
   const languageWorker = options.voice?.observeLanguage && options.memory?.saveLanguage
     ? createLanguageWorker(options.voice, options.memory, notifyMemories) : undefined;
   app.addHook('onClose', async () => { await languageWorker?.close(); });
-  const localOrigin = (origin: string | undefined) => !origin || ['http://127.0.0.1:5173', 'http://localhost:5173'].includes(origin);
   app.get('/api/memory/vectors', async (request, reply) => {
     reply.header('Cache-Control', 'no-store');
-    if (!localOrigin(request.headers.origin)) return reply.code(403).send({ error: 'Origem não permitida.' });
+    if (!originAllowed(request)) return reply.code(403).send({ error: 'Origem não permitida.' });
     if (!options.memory) return { enabled: false };
     try { return { enabled: true, ...await options.memory.vectors(AbortSignal.timeout(20_000)) }; }
     catch { return reply.code(503).send({ error: 'Não foi possível carregar o mapa de memórias.' }); }
@@ -28,14 +30,14 @@ export async function createApp(options: { voice?: VoiceProvider; memory?: Memor
   // How many facts Kelly holds; the avatar's brain glows brighter as it grows.
   app.get('/api/memory/count', async (request, reply) => {
     reply.header('Cache-Control', 'no-store');
-    if (!localOrigin(request.headers.origin)) return reply.code(403).send({ error: 'Origem não permitida.' });
+    if (!originAllowed(request)) return reply.code(403).send({ error: 'Origem não permitida.' });
     if (!options.memory?.count) return { enabled: false };
     try { return { enabled: true, count: await options.memory.count(AbortSignal.timeout(10_000)) }; }
     catch { return reply.code(503).send({ error: 'Não foi possível contar as memórias.' }); }
   });
   // Canal de observação: não recebe áudio, não escreve no banco nem chama modelos.
   app.get('/ws/memories', { websocket: true, preValidation: async (request, reply) => {
-    if (!localOrigin(request.headers.origin)) await reply.code(403).send({ error: 'Origem não permitida.' });
+    if (!originAllowed(request)) await reply.code(403).send({ error: 'Origem não permitida.' });
   } }, (socket) => {
     viewers.add(socket);
     socket.send(JSON.stringify({ type: 'memory-sync' }));
@@ -47,8 +49,7 @@ export async function createApp(options: { voice?: VoiceProvider; memory?: Memor
   app.get('/api/health', async () => ({ ok: true, mode: options.voice ? 'voice' : 'demo', model: options.voice?.model ?? null,
     ...(options.memory ? { memory: 'configured' } : {}) }));
   app.get('/api/memory', async (request, reply) => {
-    const origin = request.headers.origin;
-    if (origin && !['http://127.0.0.1:5173', 'http://localhost:5173'].includes(origin)) return reply.code(403).send({ error: 'Origem não permitida.' });
+    if (!originAllowed(request)) return reply.code(403).send({ error: 'Origem não permitida.' });
     if (!options.memory) return { enabled: false };
     try {
       const context = await options.memory.inspect(AbortSignal.timeout(20_000));
@@ -59,9 +60,8 @@ export async function createApp(options: { voice?: VoiceProvider; memory?: Memor
   app.get('/ws', {
     websocket: true,
     preValidation: async (request, reply) => {
-      const origin = request.headers.origin;
-      if (origin && !['http://127.0.0.1:5173', 'http://localhost:5173'].includes(origin)) {
-        await reply.code(403).send({ error: 'Origem não permitida na prévia local.' });
+      if (!originAllowed(request)) {
+        await reply.code(403).send({ error: 'Origem não permitida.' });
       }
     },
   }, (socket) => {

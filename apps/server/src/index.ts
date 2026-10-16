@@ -1,6 +1,7 @@
 import { createApp } from './app.ts';
 import { createVoiceProvider, readVoiceConfig } from './voice.ts';
-import { appendFileSync, mkdirSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { createMemoryService, readMemoryConfig } from './memory.ts';
 import { serializeDiagnostic, type MemoryDiagnosticRecord } from './memory-diagnostics.ts';
 
@@ -12,7 +13,10 @@ const logUsage = (record: Record<string, string | number>) => {
     appendFileSync('.local/usage.jsonl', JSON.stringify({ at: new Date().toISOString(), ...record }) + '\n');
   } catch { console.warn('Não foi possível salvar o contador de uso local.'); }
 };
+// The built web app, when present (production): this one server then serves both the page and the API.
+const webRoot = fileURLToPath(new URL('../../web/dist', import.meta.url));
 const app = await createApp({
+  webRoot: existsSync(webRoot + '/index.html') ? webRoot : undefined,
   voice: config ? createVoiceProvider(config) : undefined,
   memory: memoryConfig ? createMemoryService(memoryConfig, fetch, logUsage) : undefined,
   onUsage: logUsage,
@@ -23,8 +27,10 @@ const app = await createApp({
     } catch { console.warn('Não foi possível salvar o diagnóstico local de memória.'); }
   },
 });
-await app.listen({ host: '127.0.0.1', port: 3001 });
-console.log('Talk2urself: servidor local em http://127.0.0.1:3001');
+// Local by default; hosting sets HOST=0.0.0.0 and PORT.
+const host = process.env.HOST?.trim() || '127.0.0.1', port = Number(process.env.PORT) || 3001;
+await app.listen({ host, port });
+console.log(`Talk2urself: servidor em http://${host}:${port}`);
 console.log(config ? 'Conversa por voz configurada.' : 'Prévia demonstrativa: preencha as chaves e a voz no arquivo .env para ativar as APIs.');
 if (config?.voicePaused) console.log('Voz Cartesia pausada (CARTESIA_PAUSED=1): as respostas são faladas em silêncio, sem chamar a Cartesia.');
 console.log(memoryConfig ? 'Memória configurada; o primeiro uso verifica o acesso ao banco.' : 'Memória persistente pendente: configure o Supabase no servidor.');

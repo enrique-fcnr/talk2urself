@@ -122,3 +122,11 @@ test('contagem de memórias: desligada sem banco e lida do serviço com banco', 
   assert.deepEqual((await withMemory.inject({ method: 'GET', url: '/api/memory/count' })).json(), { enabled: true, count: 7 });
   assert.equal((await withMemory.inject({ method: 'GET', url: '/api/memory/count', headers: { origin: 'https://evil.example' } })).statusCode, 403);
 });
+
+test('o próprio domínio é aceito como origem; outros não', async (t) => {
+  const memory = { count: async () => 1 } as unknown as MemoryService;
+  const app = await createApp({ memory }); t.after(() => app.close());
+  const ask = (origin: string) => app.inject({ method: 'GET', url: '/api/memory/count', headers: { origin, host: 'talk2urself.onrender.com' } });
+  assert.equal((await ask('https://talk2urself.onrender.com')).statusCode, 200);
+  assert.equal((await ask('https://evil.example')).statusCode, 403);
+});
