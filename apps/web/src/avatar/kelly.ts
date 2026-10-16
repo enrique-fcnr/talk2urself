@@ -68,6 +68,8 @@ const firstIdleYawn = 20;
 const gestureLead = .2;
 // Portrait framing lines, in world units of the 1.9-tall bust: above the head with room for raised-head gestures, and the base of the neck.
 const headClearance = 1.04, neckLine = -.55;
+// The bust is solid down to the shoulders and gone a little below them (scene units).
+const bustSolid = -.12, bustClear = -1.02;
 // Roughly how long the camera takes to glide to a new framing when the page text changes height.
 const framingSeconds = .6;
 // Playback speed and strength per gesture: slower and smaller than authored reads calmer on screen.
@@ -83,6 +85,11 @@ type ViewOptions = {
   getPlayback: () => AvatarPlayback | null;
   getState: () => ConversationState;
   getRecording?: () => boolean;
+  // The user's voice loudness while recording; the violet brain reacts to it.
+  getMicLevel?: () => number;
+  // The brain is out in the memories view; and whether to invite a tap on it.
+  getBrainOut?: () => boolean;
+  getInvite?: () => boolean;
   // Page theme: on a light page the violet scene sits in a dark portal so its glow keeps its contrast.
   getTheme?: () => 'light' | 'dark';
   // Pixels from the top of the view that page content covers; the head stays below them.
@@ -170,6 +177,9 @@ export function mountKelly(host: HTMLElement, options: ViewOptions) {
   // own matte, softly lit look so the tongue and teeth can be seen following the words.
   const lidClosed={ value: 0 };
   const lidGlow={ value: new THREE.Color() }, cutLow={ value: new THREE.Vector4() }, cutHigh={ value: new THREE.Vector4() }, cutGlow={ value: 0 };
+  // Skull cap above the slot, lifted away while the brain comes out (see crown.cap).
+  // capShift moves a whole draw in world space (capInverse brings it back to the mesh's own space); used by the cap copy.
+  const capShift={ value: new THREE.Vector3() }, capInverse={ value: new THREE.Matrix4() };
   let crown: Crown | undefined, currentLook='neon';
   // Look uniforms: a vertical colour gradient over the bust (world height), used as surface colour and as glow.
   const lookGradient={ low: { value: new THREE.Color() }, high: { value: new THREE.Color() }, from: { value: 0 }, to: { value: 1 },
@@ -178,13 +188,15 @@ export function mountKelly(host: HTMLElement, options: ViewOptions) {
     scale: { value: 1 }, flicker: { value: 0 }, variation: { value: 0 }, time: { value: 0 } };
   const vec3=(color: number, scale=1) => { const c=new THREE.Color(color).multiplyScalar(scale); return `vec3(${c.r.toFixed(4)},${c.g.toFixed(4)},${c.b.toFixed(4)})`; };
   material.onBeforeCompile=shader=>{
-    Object.assign(shader.uniforms,{ lidGlow, cutLow, cutHigh, cutGlow, cutColor: { value: new THREE.Color(0xd9b8ff) } });
+    Object.assign(shader.uniforms,{ lidGlow, cutLow, cutHigh, cutGlow, cutColor: { value: new THREE.Color(0xd9b8ff) }, capShift, capInverse });
     shader.uniforms.lidClosed=lidClosed;
     shader.uniforms.gradLow=lookGradient.low; shader.uniforms.gradHigh=lookGradient.high; shader.uniforms.gradFrom=lookGradient.from; shader.uniforms.gradTo=lookGradient.to;
     shader.uniforms.gradGlow=lookGradient.glow; shader.uniforms.gradTint=lookGradient.tint; shader.uniforms.eyeCut=lookGradient.eyeCut; shader.uniforms.gradEdge=lookGradient.edge;
     Object.assign(shader.uniforms,{ rimStrength: rimFire.strength, rimPower: rimFire.power, rimA: rimFire.colorA, rimB: rimFire.colorB,
       rimScale: rimFire.scale, rimFlicker: rimFire.flicker, rimVariation: rimFire.variation, rimTime: rimFire.time });
-    shader.vertexShader=shader.vertexShader.replace('#include <common>','#include <common>\nattribute vec4 lid;\nvarying vec4 vLid;\nvarying float vWorldY;\nvarying vec3 vWorld;')
+    shader.vertexShader=shader.vertexShader.replace('#include <common>','#include <common>\nattribute vec4 lid;\nvarying vec4 vLid;\nvarying float vWorldY;\nvarying vec3 vWorld;\nuniform vec3 capShift; uniform mat4 capInverse;')
+      // The cap copy is drawn shifted as a rigid whole, so it keeps exactly the shape it has on the head.
+      .replace('#include <project_vertex>','transformed+=(capInverse*vec4(capShift,0.)).xyz;\n#include <project_vertex>')
       .replace('#include <begin_vertex>','#include <begin_vertex>\nvLid=lid;')
       .replace('#include <project_vertex>','#include <project_vertex>\nvWorld=(modelMatrix*vec4(transformed,1.)).xyz; vWorldY=vWorld.y;');
     shader.fragmentShader=shader.fragmentShader.replace('#include <common>',`#include <common>
@@ -236,7 +248,7 @@ export function mountKelly(host: HTMLElement, options: ViewOptions) {
         #endif`);
   };
   function applyLook(name: string) {
-    const look=looks[name] ?? looks.neon; currentLook=name;
+    const look=looks[name] ?? looks.violet; currentLook=looks[name] ? name : 'violet';
     lidGlow.value.set(look.lidColor).multiplyScalar(lidGlowStrength);
     // Violet opens the skull: clip above the cut, draw both sides so the inside of the head shows, light the cut band.
     crown?.setVisible(look.crown); cutGlow.value=look.crown && crown ? 1.4 : 0;
@@ -256,10 +268,21 @@ export function mountKelly(host: HTMLElement, options: ViewOptions) {
     lookGradient.from.value=look.gradient.from; lookGradient.to.value=look.gradient.to;
     lookGradient.glow.value=look.gradient.glow; lookGradient.tint.value=look.gradient.tint; lookGradient.eyeCut.value=look.gradient.eyeCut;
   }
-  // ?look=halo on the page URL picks a preset; the default is the neon obsidian look.
-  applyLook(new URLSearchParams(location.search).get('look') ?? 'neon');
+  // ?look=neon on the page URL picks another preset; the default is the violet look with the open skull.
+  applyLook(new URLSearchParams(location.search).get('look') ?? 'violet');
   const stage=new THREE.Group(); scene.add(stage);
   const heads: THREE.Mesh[] = [], geometries: THREE.BufferGeometry[] = [];
+  // While the skull cap is lifted the head and its cap copy are cut by different planes; each draw selects its own,
+  // and the slot glow follows (with both planes equal, the glow sits on that single cut edge).
+  const caps: THREE.SkinnedMesh[] = [], pendingCaps: [THREE.Mesh, THREE.SkinnedMesh][] = [];
+  const headCut=[new THREE.Plane(),new THREE.Plane()], capCut=[new THREE.Plane(),new THREE.Plane()];
+  // The cap has its own material (a copy of the skin) so its cut, glow edge and shift never mix with the head's.
+  const capMaterial=new THREE.MeshPhysicalMaterial(), capCutLow={ value: new THREE.Vector4() }, capCutHigh={ value: new THREE.Vector4() };
+  const capShiftOn={ value: new THREE.Vector3() }, capInverseOn={ value: new THREE.Matrix4() };
+  capMaterial.onBeforeCompile=(shader,renderer)=>{ material.onBeforeCompile(shader,renderer);
+    Object.assign(shader.uniforms,{ cutLow: capCutLow, cutHigh: capCutHigh, capShift: capShiftOn, capInverse: capInverseOn }); };
+  capMaterial.customProgramCacheKey=()=>'kelly-cap';
+  let capSynced='';
   let disposed=false, frame=0, size: THREE.Vector3 | undefined, lastTime=0, mixer: THREE.AnimationMixer | undefined, topBleed=0;
   let lastState: ConversationState='idle', listenTimer=3, sinceYawn=0, idleFor=0, idleYawnAfter=firstIdleYawn, tiltRelease=0, glanceIn=glanceEvery(), viewShift=0, viewShiftX=0;
   let cuePlayback: AvatarPlayback | null=null, nextCue=0, previewState: ConversationState | null=null;
@@ -399,9 +422,6 @@ export function mountKelly(host: HTMLElement, options: ViewOptions) {
     const focusAvatar=bottomAnchored && desktopView.matches;
     // Above the button, leave a band for the chest: Kelly sits higher and her torso shows before it fades out.
     const covered=Math.max(0,options.getFootroom?.() ?? 0), chest=covered ? Math.min(40,height*.05) : 0, footroom=bottomAnchored ? 0 : covered+chest;
-    // Pixels from the canvas bottom up to the page content below Kelly: the stylesheet fades her bust out above it.
-    const fadeBottom=`${Math.round(covered+Math.max(0,rect.bottom-innerHeight))}px`;
-    if (host.style.getPropertyValue('--fade-bottom')!==fadeBottom) host.style.setProperty('--fade-bottom',fadeBottom);
     const { distance, viewShift: shift }=portraitFrame({ width,height,headroom,visibleBottom,tan,designDistance,eyeLevel,footroom,
       bottomAnchored, bottomCrop:focusAvatar ? Math.min(96,height*.14) : 0,
       points:[{ x:0,y:headClearance,z:0 },{ x:0,y:bottomAnchored ? -.95 : neckLine,z:0 },...(looks[currentLook]?.crown && !focusAvatar ? crownPortraitPoints : [])] });
@@ -411,7 +431,14 @@ export function mountKelly(host: HTMLElement, options: ViewOptions) {
     else { camera.position.z=smoothDamp(camera.position.z,distance,'z',dt); viewShift=smoothDamp(viewShift,shift,'shift',dt); viewShiftX=smoothDamp(viewShiftX,shiftX,'x',dt); }
     const viewport=portraitViewport(height,viewShift,topBleed);
     camera.setViewOffset(width,height,-viewShiftX,viewport.offsetY,width,viewport.renderHeight);
+    // Where her shoulders are, in pixels up from the canvas bottom: the stylesheet keeps her solid down to the
+    // shoulder line and fully faded a little below it, whatever the screen size.
+    for (const [name,y] of [['--bust-solid',bustSolid],['--bust-clear',bustClear]] as const) {
+      const px=`${Math.round((bustPoint.set(0,y,0).project(camera).y+1)/2*viewport.renderHeight)}px`;
+      if (host.style.getPropertyValue(name)!==px) host.style.setProperty(name,px);
+    }
   }
+  const bustPoint=new THREE.Vector3();
   const observer=new ResizeObserver(resize); observer.observe(host); resize();
   function draw(time: number) {
     if (disposed || document.hidden) return;
@@ -445,8 +472,21 @@ export function mountKelly(host: HTMLElement, options: ViewOptions) {
     rimFire.time.value=reduced.matches ? 0 : seconds;
     if (crown) { crown.setPortal(options.getTheme?.()==='light'); crown.setPortalScale(phoneView.matches ? 1.22 : 1); }
     if (crown && looks[currentLook]?.crown) {
+      crown.setVoice(options.getMicLevel?.() ?? 0); crown.setBrainOut(!!options.getBrainOut?.()); crown.setInvite(!!options.getInvite?.());
       scene.updateMatrixWorld(); crown.update(reduced.matches ? 0 : seconds);
       for (const [uniform,plane] of [[cutLow,crown.planes[0]],[cutHigh,crown.planes[1]]] as const) uniform.value.set(plane.normal.x,plane.normal.y,plane.normal.z,plane.constant);
+      // Cap open: the head keeps only what is below the slot, and a copy shifted up keeps only what was above it.
+      const open=crown.cap.lift.lengthSq()>0;
+      for (const cap of caps) cap.visible=open;
+      if (open) {
+        headCut[0].copy(crown.planes[0]); headCut[1].copy(crown.planes[0]); material.clippingPlanes=headCut;
+        // The cap copy is the part above the slot's upper face before lifting, moved up as one piece.
+        capCut[0].copy(crown.planes[1]); capCut[0].constant-=capCut[0].normal.dot(crown.cap.lift); capCut[1].copy(capCut[0]);
+        if (capSynced!==currentLook) { const onBefore=capMaterial.onBeforeCompile, key=capMaterial.customProgramCacheKey; capMaterial.copy(material); capMaterial.onBeforeCompile=onBefore; capMaterial.customProgramCacheKey=key; capMaterial.needsUpdate=true; capSynced=currentLook; }
+        capMaterial.clippingPlanes=capCut; capMaterial.clipIntersection=true;
+        for (const [uniform,plane] of [[cutLow,headCut[0]],[cutHigh,headCut[1]],[capCutLow,capCut[0]],[capCutHigh,capCut[1]]] as const) uniform.value.set(plane.normal.x,plane.normal.y,plane.normal.z,plane.constant);
+        capShiftOn.value.copy(crown.cap.lift); if (caps[0]) capInverseOn.value.copy(caps[0].matrixWorld).invert();
+      } else material.clippingPlanes=crown.planes;
     }
     // Ease toward the framing so the bust glides when a message appears below the title.
     if (options.portrait && size) fitPortrait(dt);
@@ -479,11 +519,20 @@ export function mountKelly(host: HTMLElement, options: ViewOptions) {
       for(const original of Array.isArray(object.material) ? object.material : [object.material]) original.dispose();
       // Gestures move the skin beyond the rest-pose bounds.
       object.material=material; object.frustumCulled=false; heads.push(object); geometries.push(object.geometry);
+      // The skull cap's copy: same geometry, skeleton and expressions, hidden unless the cap is lifted.
+      if (object instanceof THREE.SkinnedMesh) {
+        const cap=new THREE.SkinnedMesh(object.geometry,material); cap.bind(object.skeleton,object.bindMatrix);
+        cap.position.copy(object.position); cap.quaternion.copy(object.quaternion); cap.scale.copy(object.scale);
+        cap.morphTargetInfluences=object.morphTargetInfluences; cap.morphTargetDictionary=object.morphTargetDictionary;
+        cap.frustumCulled=false; cap.visible=false; cap.name='cap'; pendingCaps.push([object,cap]);
+        cap.material=capMaterial;
+      }
       // The lid and mouth marks arrive as vertex colour; keep them under their own name so they never tint the surface.
       const colors=object.geometry.getAttribute('color'), lid=new Float32Array(object.geometry.getAttribute('position').count*4).fill(1);
       if (colors) for (let i=0;i<lid.length/4;i++) lid.set([colors.getX(i),colors.getY(i),colors.getZ(i),colors.itemSize>3 ? colors.getW(i) : 1],i*4);
       object.geometry.setAttribute('lid',new THREE.BufferAttribute(lid,4)); object.geometry.deleteAttribute('color');
     });
+    for (const [head,cap] of pendingCaps) { head.parent?.add(cap); caps.push(cap); }
     mixer=new THREE.AnimationMixer(avatar);
     for (const clip of gltf.animations) {
       THREE.AnimationUtils.makeClipAdditive(clip,neutralFrame[clip.name] ?? 0,clip,30);

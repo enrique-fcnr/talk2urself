@@ -148,7 +148,9 @@ export function useConversation() {
           if (socket?.readyState !== WebSocket.OPEN) throw new Error();
           socket.send(JSON.stringify({ type: 'audio-input', mime: blob.type, seconds })); socket.send(bytes);
         } catch { if (current === generation.current) { setSubmitting(false); setError('Não foi possível enviar a gravação. Confira a conexão e tente novamente.'); } }
-      }, (message) => { if (current === generation.current) { recorderRef.current = null; setRecording(false); setSubmitting(false); setError(message); } });
+      }, (message) => { if (current === generation.current) { recorderRef.current = null; setRecording(false); setSubmitting(false); setError(message); } },
+      // Hands-free: the turn ends by itself after a pause; if nothing was said, nothing is sent.
+      { handsFree: true, onSilent: () => { if (current === generation.current) { recorderRef.current = null; setRecording(false); setError('Não ouvi nada. Toque nela quando quiser falar.'); } } });
       if (current !== generation.current) { recorder.cancel(); return; }
       recorderRef.current = recorder; setRecording(true);
     } catch (error) {
@@ -159,5 +161,17 @@ export function useConversation() {
     } finally { if (current === generation.current) { startingRef.current = false; setStarting(false); } }
   }
   function finishRecording() { recorderRef.current?.finish(); }
-  return { state, connection, mode, model, text, transcript, error, send, waking, recording, starting, submitting, needsPlayback, usage, recall, playbackRef, unlockAudio, startRecording, finishRecording, playAnswer };
+  // Loudness of the user's voice while recording, for Kelly to react to (0 when not recording).
+  function micLevel() { return recorderRef.current?.level() ?? 0; }
+  // Tapping Kelly while she speaks cuts her off and starts listening, as in a real conversation.
+  const pendingRecord = useRef(false);
+  function interrupt() {
+    if (state !== 'speaking' || mode !== 'voice') return;
+    clearPlayer(); setNeedsPlayback(false); pendingRecord.current = true; send('playback-ended');
+  }
+  useEffect(() => {
+    if (state === 'listening' && pendingRecord.current) { pendingRecord.current = false; void startRecording(); }
+    else if (state !== 'speaking') pendingRecord.current = false;
+  }, [state]);
+  return { state, connection, mode, model, text, transcript, error, send, waking, recording, starting, submitting, needsPlayback, usage, recall, playbackRef, unlockAudio, startRecording, finishRecording, playAnswer, micLevel, interrupt };
 }

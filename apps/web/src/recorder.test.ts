@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { quietPeak, recordMicrophone } from './recorder.ts';
+import { createSpeechGate, quietPeak, recordMicrophone } from './recorder.ts';
 
 test('a gravação informa o pico de volume para detectar microfone mudo', async (t) => {
   const descriptors = ['navigator', 'MediaRecorder', 'AudioContext'].map((name) => [name, Object.getOwnPropertyDescriptor(globalThis, name)] as const);
@@ -64,4 +64,26 @@ test('enviar libera o microfone e cancelar não entrega uma gravação antiga', 
   const cancelled = await recordMicrophone(() => { delivered++; }, () => assert.fail('Não deveria falhar.'));
   cancelled.cancel(); await new Promise<void>((resolve) => queueMicrotask(resolve));
   assert.equal(delivered, 1); assert.ok(stoppedTracks > before);
+});
+
+test('conversa sem toque: envia após uma pausa e desiste se ninguém falar', () => {
+  const step = .05, feed = (gate: ReturnType<typeof createSpeechGate>, rms: number, seconds: number) => {
+    let state = gate.state;
+    for (let t = 0; t < seconds - 1e-9; t += step) state = gate.update(rms, step);
+    return state;
+  };
+  const talk = createSpeechGate();
+  assert.equal(feed(talk, .004, .5), 'waiting', 'room noise is not speech');
+  assert.equal(feed(talk, .08, 1.2), 'speaking');
+  assert.equal(feed(talk, .004, .8), 'speaking', 'a short breath does not end the turn');
+  assert.equal(feed(talk, .08, .5), 'speaking');
+  assert.equal(feed(talk, .004, 1.4), 'done', 'a real pause ends the turn');
+
+  const click = createSpeechGate();
+  feed(click, .004, .5);
+  assert.equal(feed(click, .08, .1), 'waiting', 'a click is too short to count as speech');
+  assert.equal(feed(click, .004, 8), 'silent', 'nobody spoke: give up');
+
+  const noisy = createSpeechGate();
+  assert.equal(feed(noisy, .03, 3), 'waiting', 'a steady noisy room never counts as speech');
 });

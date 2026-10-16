@@ -23,14 +23,15 @@ export function lineAt(lines: string[], progress: number): number {
   return Math.max(0, lines.length - 1);
 }
 
-type Shown = { key: string; text: string; who: 'kelly' | 'you' | 'hint' };
+type Shown = { key: string; text: string; who: 'kelly' | 'you' | 'hint'; arrow?: boolean };
 // Live captions above Kelly: one line at a time, its words emerging from a blur and dissolving as the next line
 // arrives. Kelly's words follow her audio; after the user speaks, what she understood shows in a quieter tone.
 // Nothing stays on screen once a line has passed. place() gives the line's vertical centre, in pixels from the top
 // of the conversation area.
 // hint: a short guidance line ("Toque nela para falar") shown in the same place while nobody is talking.
-export default function Captions({ text, transcript, speaking, thinking, playbackRef, place, hint }: {
-  text: string; transcript: string; speaking: boolean; thinking: boolean; playbackRef: RefObject<AvatarPlayback | null>; place: () => number | null; hint?: string;
+// hintArrow: the hint points down at Kelly (a small bobbing chevron after it).
+export default function Captions({ text, transcript, speaking, thinking, playbackRef, place, hint, hintArrow = false }: {
+  text: string; transcript: string; speaking: boolean; thinking: boolean; playbackRef: RefObject<AvatarPlayback | null>; place: () => number | null; hint?: string; hintArrow?: boolean;
 }) {
   const [shown, setShown] = useState<Shown | null>(null), [leaving, setLeaving] = useState<Shown | null>(null);
   const current = useRef<Shown | null>(null), box = useRef<HTMLDivElement>(null), placeRef = useRef(place);
@@ -68,7 +69,7 @@ export default function Captions({ text, transcript, speaking, thinking, playbac
     return () => clearInterval(timer);
   }, [thinking, transcript]);
   // Between turns the line empties, or shows the hint when there is one.
-  useEffect(() => { if (!speaking && !thinking) show(hint ? { key: `h:${hint}`, text: hint, who: 'hint' } : null); }, [speaking, thinking, hint]);
+  useEffect(() => { if (!speaking && !thinking) show(hint ? { key: `h:${hint}`, text: hint, who: 'hint', arrow: hintArrow } : null); }, [speaking, thinking, hint, hintArrow]);
   // Keep the line centred in its gap as the layout settles or the window changes.
   useEffect(() => {
     if (!shown && !leaving) return;
@@ -93,5 +94,6 @@ function Line({ shown, out = false }: { shown: Shown; out?: boolean }) {
   return <p className={`caption${out ? ' leaving' : ''}`} data-who={shown.who}>
     {shown.who === 'you' ? <span className="caption-who">você</span> : shown.who === 'hint' ? <span className="caption-pulse" /> : null}
     {words.map((word, i) => <span className="caption-word" key={i} style={{ '--i': i, '--n': words.length, '--drift': `${((i * 37) % 7 - 3) * .6}px` } as CSSProperties}>{word}</span>)}
+    {shown.arrow ? <span className="caption-arrow" style={{ '--i': words.length } as CSSProperties} /> : null}
   </p>;
 }

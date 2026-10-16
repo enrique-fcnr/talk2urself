@@ -10,7 +10,9 @@ import './brain.css';
 type Status = 'loading' | 'ready' | 'disabled' | 'error';
 type Focus = { point: BrainPoint; pinned: boolean };
 // Scene scale: the avatar's brain is ~.6 world units wide; here it fills the view.
-const size = .82, cameraRest = 3.3, cameraStart = 9, introSeconds = 1.4, closeSeconds = .55;
+// The brain rises out of Kelly's head (the page animates the canvas from her brain to the centre); the camera only
+// settles a little closer meanwhile.
+const size = .82, cameraRest = 3.3, cameraStart = 3.9, introSeconds = 1.2, closeSeconds = .6;
 // Seconds a new memory takes to fly to its place, and between memories when several arrive together.
 const flySeconds = 1.6, flyStagger = .09, moveSeconds = 1.2;
 const seenKey = 'talk2urself-brain-seen';
@@ -23,9 +25,13 @@ function writeSeen(ids: string[]) { try { localStorage.setItem(seenKey, JSON.str
 const label = (point: BrainPoint) => point.memory.category?.label ?? 'Lembrança';
 const color = (point: BrainPoint) => point.memory.category?.color ?? fallbackColor;
 
+// Warm up the shape so the first opening is instant.
+export function preloadBrain() { void loadBrainShape().catch(() => { /* Retried when the view opens. */ }); }
+
 // The violet brain, opened up: every saved memory is a point of light inside it, memories on the same subject share
 // a region, related ones are joined by faint synapses, and the ones used for the latest answer pulse.
-export default function BrainView({ origin, recall, onClose }: { origin: { x: number; y: number }; recall: Recall | null; onClose: () => void }) {
+// onLeave fires as closing starts, so the brain can begin returning into Kelly's head while the hologram shrinks.
+export default function BrainView({ origin, recall, onClose, onLeave }: { origin: { x: number; y: number }; recall: Recall | null; onClose: () => void; onLeave?: () => void }) {
   const host = useRef<HTMLDivElement>(null), card = useRef<HTMLDivElement>(null), closeButton = useRef<HTMLButtonElement>(null);
   const [status, setStatus] = useState<Status>('loading');
   const [layout, setLayout] = useState<BrainLayout | null>(null);
@@ -36,12 +42,14 @@ export default function BrainView({ origin, recall, onClose }: { origin: { x: nu
   const api = useRef<{ setLayout(layout: BrainLayout): void; setRecall(recall: Recall | null): void; select(id: string | null): void; leave(): void } | null>(null);
   const focusRef = useRef<Focus | null>(null); focusRef.current = focus;
   const recallRef = useRef(recall); recallRef.current = recall;
+  const closeRef = useRef<() => void>(() => {});
 
   function close() {
     if (closing) return;
-    setClosing(true); api.current?.leave();
+    setClosing(true); api.current?.leave(); onLeave?.();
     setTimeout(onClose, closeSeconds * 1000);
   }
+  closeRef.current = close;
   useEffect(() => {
     closeButton.current?.focus();
     const key = (event: KeyboardEvent) => { if (event.key === 'Escape') { if (focusRef.current?.pinned) setFocus(null); else close(); } };
@@ -203,7 +211,11 @@ export default function BrainView({ origin, recall, onClose }: { origin: { x: nu
       const moved = downAt ? Math.hypot(event.clientX - downAt.x, event.clientY - downAt.y) : 99; downAt = null;
       if (moved > 6) return;
       const item = pick(event);
-      setFocus(item ? { point: item.point, pinned: true } : null);
+      if (item) { setFocus({ point: item.point, pinned: true }); return; }
+      // A tap on the brain itself only lets go of the card; a tap beside it sends the brain back into her head.
+      if (focusRef.current?.pinned) { setFocus(null); return; }
+      const shell = holo?.group.children[0];
+      if (!shell || !ray.intersectObject(shell).length) closeRef.current();
     };
     const onLeave = () => { hovered = null; if (!focusRef.current?.pinned) setFocus(null); };
     renderer.domElement.addEventListener('pointermove', onMove);
@@ -292,7 +304,7 @@ export default function BrainView({ origin, recall, onClose }: { origin: { x: nu
   const recalled = (point: BrainPoint) => !!recall?.keys.has(recallKey(point.memory.slot, point.memory.value));
   // Portalled to the body: the page's stage isolates its own layers, and the brain must cover the header too.
   return createPortal(<div className={`brain-view${closing ? ' closing' : ''}`} role="dialog" aria-modal="true" aria-labelledby="brain-title"
-    style={{ '--origin-x': `${origin.x}px`, '--origin-y': `${origin.y}px` } as CSSProperties}>
+    style={{ '--origin-x': `${origin.x}px`, '--origin-y': `${origin.y}px`, '--dx': `${origin.x - innerWidth / 2}px`, '--dy': `${origin.y - innerHeight / 2}px` } as CSSProperties}>
     <div ref={host} className="brain-scene" />
     <header className="brain-header">
       <div><h2 id="brain-title">Memórias</h2>
@@ -312,7 +324,7 @@ export default function BrainView({ origin, recall, onClose }: { origin: { x: nu
     <footer className="brain-footer">
       {subjects.length ? <ul className="brain-subjects" aria-label="Assuntos">{subjects.map((subject) =>
         <li key={subject.label}><i style={{ background: subject.color }} />{subject.label} <span>{subject.count}</span></li>)}</ul> : null}
-      <p>{count ? 'Arraste para girar · toque num ponto para lembrar' : ''}{count ? ' · ' : ''}<a href="/memories" target="_blank" rel="noreferrer">Mapa detalhado ↗</a></p>
+      <p>{count ? 'Gire com o dedo · toque num ponto para lembrar · toque fora para voltar · ' : 'Toque fora para voltar · '}<a href="/memories" target="_blank" rel="noreferrer">Mapa detalhado ↗</a></p>
       <p className="brain-credit">Modelo do cérebro: <a href="https://sketchfab.com/3d-models/human-brain-cerebrum-brainstem-0aa0e33c5c854d1bab7bac9e1c7acaec" target="_blank" rel="noreferrer">pranktoy</a>, CC BY 4.0</p>
     </footer>
     <ul className="sr-only" aria-label="Lista de memórias">{layout?.points.map((point) =>

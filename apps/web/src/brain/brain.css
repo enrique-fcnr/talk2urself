@@ -1,11 +1,23 @@
-/* The brain view opens as a circle growing out of Kelly's brain and closes back into it. Always the night sky of the
-   violet look, whatever the page theme, so the points of light keep their contrast. */
-.brain-view { position: fixed; inset: 0; z-index: 1000; color: #efe7ff; background: radial-gradient(ellipse at 50% 45%, #2a1650 0, #150b2c 55%, #08040f 100%);
-  clip-path: circle(150vmax at var(--origin-x) var(--origin-y)); animation: brain-open .9s cubic-bezier(.6, 0, .2, 1) both; font-size: 14px; }
-.brain-view.closing { clip-path: circle(0 at var(--origin-x) var(--origin-y)); transition: clip-path .55s cubic-bezier(.6, 0, .4, 1); }
-@keyframes brain-open { from { clip-path: circle(0 at var(--origin-x) var(--origin-y)); } }
+/* The brain view is not another page: Kelly stays behind it, dimmed and blurred, while her brain rises out of her head
+   and grows into the hologram (the scene is animated from the brain's spot on the page, --dx/--dy from the centre).
+   Closing reverses it and the brain sinks back into her head. */
+.brain-view { position: fixed; inset: 0; z-index: 1000; color: #efe7ff; font-size: 14px;
+  background: radial-gradient(ellipse at 50% 42%, rgba(30, 16, 58, .58) 0, rgba(14, 7, 30, .74) 58%, rgba(6, 3, 12, .86) 100%);
+  -webkit-backdrop-filter: blur(9px) saturate(1.1); backdrop-filter: blur(9px) saturate(1.1); animation: brain-scrim-in .6s ease both; }
+.brain-view.closing { animation: brain-scrim-out .6s ease .05s both; }
+.brain-view .brain-scene { animation: brain-rise .9s cubic-bezier(.65, 0, .35, 1) both; }
+.brain-view.closing .brain-scene { animation: brain-sink .6s cubic-bezier(.65, 0, .35, 1) both; }
+.brain-view .brain-header, .brain-view .brain-footer { animation: brain-chrome-in .5s ease .55s both; }
+.brain-view.closing .brain-header, .brain-view.closing .brain-footer { animation: brain-chrome-out .25s ease both; }
+@keyframes brain-scrim-in { from { opacity: 0; } }
+@keyframes brain-scrim-out { to { opacity: 0; } }
+@keyframes brain-rise { from { opacity: 0; transform: translate(var(--dx), var(--dy)) scale(.17); } 40% { opacity: 1; } }
+@keyframes brain-sink { 55% { opacity: 1; } to { opacity: 0; transform: translate(var(--dx), var(--dy)) scale(.17); } }
+@keyframes brain-chrome-in { from { opacity: 0; transform: translateY(6px); } }
+@keyframes brain-chrome-out { to { opacity: 0; } }
 .brain-scene { position: absolute; inset: 0; }
-.brain-scene canvas { display: block; width: 100%; height: 100%; cursor: grab; touch-action: none; }
+/* The hologram is pure light: screen-blend it so its black clears to the dimmed scene behind instead of covering it. */
+.brain-scene canvas { display: block; width: 100%; height: 100%; cursor: grab; touch-action: none; mix-blend-mode: screen; }
 .brain-scene canvas:active { cursor: grabbing; }
 .brain-header { position: absolute; top: 0; left: 0; right: 0; display: flex; justify-content: space-between; align-items: flex-start; padding: 22px 28px; pointer-events: none; }
 .brain-header h2 { margin: 0; font-size: 22px; font-weight: 500; letter-spacing: -.4px; }
@@ -39,4 +51,4 @@
   .brain-subjects { gap: 4px 10px; }
   .brain-subjects li { font-size: 11px; }
 }
-@media (prefers-reduced-motion: reduce) { .brain-view, .brain-view.closing { animation: none; transition: none; } }
+@media (prefers-reduced-motion: reduce) { .brain-view, .brain-view.closing, .brain-view .brain-scene, .brain-view.closing .brain-scene { animation: none; } }
