@@ -230,7 +230,7 @@ export default function App() {
         <i />{moment.kind === 'recall' ? <><strong>lembrou</strong>{moment.text}{moment.extra ? <span>+{moment.extra}</span> : null}</> : <strong>{moment.text}</strong>}
       </p> : null}
       {started && toast ? <p className="toast" role="alert">{toast}</p> : null}
-      {brainOrigin ? <Suspense fallback={null}><BrainView origin={brainOrigin} recall={recall} onClose={closeBrain} onLeave={() => setBrainOut(false)} /></Suspense> : null}
+      {brainOrigin ? <Suspense fallback={null}><BrainView origin={brainOrigin} recall={recall} theme={theme} onClose={closeBrain} onLeave={() => setBrainOut(false)} /></Suspense> : null}
     </main>
   </div>;
 }

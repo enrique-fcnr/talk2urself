@@ -1,9 +1,15 @@
 /* The brain view is not another page: Kelly stays behind it, dimmed and blurred, while her brain rises out of her head
    and grows into the hologram (the scene is animated from the brain's spot on the page, --dx/--dy from the centre).
    Closing reverses it and the brain sinks back into her head. */
-.brain-view { position: fixed; inset: 0; z-index: 1000; color: #efe7ff; font-size: 14px;
-  background: radial-gradient(ellipse at 50% 42%, rgba(30, 16, 58, .58) 0, rgba(14, 7, 30, .74) 58%, rgba(6, 3, 12, .86) 100%);
+/* Colours follow the app theme: night violet in dark, a pale lilac veil in light (the brain is then drawn as ink). */
+.brain-view { --bv-ink: #efe7ff; --bv-muted: #c3b3ea; --bv-faint: #a693d4; --bv-accent: #d2bcff; --bv-line: #ffffff2b; --bv-chip: #ffffff0f; --bv-chip-on: #ffffff26;
+  --bv-card: #1b0f35eb; --bv-card-line: #c4a6ff40; --bv-card-pinned: #c4a6ff8c; --bv-shadow: 0 12px 40px #0008;
+  --bv-scrim: radial-gradient(ellipse at 50% 42%, rgba(30, 16, 58, .58) 0, rgba(14, 7, 30, .74) 58%, rgba(6, 3, 12, .86) 100%);
+  position: fixed; inset: 0; z-index: 1000; color: var(--bv-ink); font-size: 14px; background: var(--bv-scrim);
   -webkit-backdrop-filter: blur(9px) saturate(1.1); backdrop-filter: blur(9px) saturate(1.1); animation: brain-scrim-in .6s ease both; }
+.brain-view[data-theme='light'] { --bv-ink: #2c2a3a; --bv-muted: #5f5874; --bv-faint: #6d6584; --bv-accent: #6a45c4; --bv-line: #2c2a3a24; --bv-chip: #ffffffa8; --bv-chip-on: #ece4fb;
+  --bv-card: #fffffff2; --bv-card-line: #e2dbef; --bv-card-pinned: #b9a3ea; --bv-shadow: 0 14px 40px #4a32861f;
+  --bv-scrim: radial-gradient(ellipse at 50% 42%, rgba(252, 250, 255, .8) 0, rgba(244, 239, 252, .88) 58%, rgba(236, 230, 248, .94) 100%); }
 .brain-view.closing { animation: brain-scrim-out .6s ease .05s both; }
 .brain-view .brain-scene { animation: brain-rise .9s cubic-bezier(.65, 0, .35, 1) both; }
 .brain-view.closing .brain-scene { animation: brain-sink .6s cubic-bezier(.65, 0, .35, 1) both; }
@@ -18,37 +24,48 @@
 .brain-scene { position: absolute; inset: 0; }
 /* The hologram is pure light: screen-blend it so its black clears to the dimmed scene behind instead of covering it. */
 .brain-scene canvas { display: block; width: 100%; height: 100%; cursor: grab; touch-action: none; mix-blend-mode: screen; }
+.brain-view[data-theme='light'] .brain-scene canvas { mix-blend-mode: normal; }
 .brain-scene canvas:active { cursor: grabbing; }
 .brain-header { position: absolute; top: 0; left: 0; right: 0; display: flex; justify-content: space-between; align-items: flex-start; padding: 22px 28px; pointer-events: none; }
 .brain-header h2 { margin: 0; font-size: 22px; font-weight: 500; letter-spacing: -.4px; }
-.brain-header p { margin: 4px 0 0; font-size: 12px; letter-spacing: .6px; color: #b9a6e4; }
-.brain-close { pointer-events: auto; width: 40px; height: 40px; display: grid; place-items: center; border-radius: 50%; border: 1px solid #ffffff26; background: #ffffff0d; color: inherit; cursor: pointer; transition: background .2s ease; }
-.brain-close:hover { background: #ffffff1f; }
+.brain-header p { margin: 4px 0 0; font-size: 13px; letter-spacing: .2px; color: var(--bv-muted); }
+.brain-close { pointer-events: auto; width: 44px; height: 44px; display: grid; place-items: center; border-radius: 50%; border: 1px solid var(--bv-line); background: var(--bv-chip); color: inherit; cursor: pointer; transition: background .2s ease; }
+.brain-close:hover { background: var(--bv-chip-on); }
+.brain-close:focus { outline: none; }
+.brain-close:focus-visible { outline: 2px solid var(--bv-accent); outline-offset: 2px; }
 .brain-close svg { width: 18px; height: 18px; }
-.brain-message { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); margin: 0; width: min(340px, calc(100vw - 48px)); text-align: center; line-height: 1.6; color: #d8cbf5; pointer-events: none; }
-.brain-message button { pointer-events: auto; display: block; margin: 12px auto 0; font: inherit; color: inherit; background: #ffffff14; border: 1px solid #ffffff2e; border-radius: 999px; padding: 6px 16px; cursor: pointer; }
+.brain-message { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); margin: 0; width: min(340px, calc(100vw - 48px)); text-align: center; line-height: 1.6; color: var(--bv-muted); pointer-events: none; }
+.brain-message button { pointer-events: auto; display: block; margin: 12px auto 0; font: inherit; color: inherit; background: var(--bv-chip); border: 1px solid var(--bv-line); border-radius: 999px; padding: 6px 16px; cursor: pointer; }
 /* The card follows its point (--x, --y set every frame), sitting just above it. */
 .brain-card { position: absolute; left: 0; top: 0; transform: translate(var(--x, -999px), var(--y, -999px)); width: max-content; max-width: min(300px, calc(100vw - 32px));
-  padding: 12px 15px; border-radius: 14px; background: #1b0f35e6; border: 1px solid #c4a6ff40; box-shadow: 0 12px 40px #0008; backdrop-filter: blur(8px); pointer-events: none; animation: brain-card-in .2s ease both; }
-.brain-card.pinned { border-color: #c4a6ff80; }
+  padding: 12px 15px; border-radius: 14px; background: var(--bv-card); border: 1px solid var(--bv-card-line); box-shadow: var(--bv-shadow); backdrop-filter: blur(8px); pointer-events: none; animation: brain-card-in .2s ease both; }
+.brain-card.pinned { border-color: var(--bv-card-pinned); }
 /* Hovering shows a preview; a tap pins the card with the whole memory. */
 .brain-card:not(.pinned) p { display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; }
 @keyframes brain-card-in { from { opacity: 0; } }
 .brain-card p { margin: 6px 0; line-height: 1.45; font-size: 14px; }
-.brain-card small { font-size: 11px; color: #ad9bd6; }
-.brain-card-subject { display: flex; align-items: center; gap: 7px; font-size: 10px; letter-spacing: 1.2px; text-transform: uppercase; color: #c9b8ef; }
-.brain-card-subject i, .brain-subjects i { width: 8px; height: 8px; border-radius: 50%; box-shadow: 0 0 8px currentColor; flex: none; }
+.brain-card small { font-size: 12px; color: var(--bv-faint); }
+.brain-card-subject { display: flex; align-items: center; gap: 7px; font-size: 11px; letter-spacing: 1px; text-transform: uppercase; color: var(--bv-muted); }
+.brain-card-subject i, .brain-subjects i { width: 8px; height: 8px; border-radius: 50%; flex: none; }
 .brain-footer { position: absolute; left: 0; right: 0; bottom: 0; padding: 0 24px 20px; text-align: center; pointer-events: none; }
-.brain-subjects { list-style: none; margin: 0 auto 12px; padding: 0; display: flex; flex-wrap: wrap; justify-content: center; gap: 6px 14px; max-width: 760px; }
-.brain-subjects li { display: flex; align-items: center; gap: 6px; font-size: 12px; color: #d9ccf6; }
-.brain-subjects span { color: #8f7db8; }
-.brain-footer p { margin: 0; font-size: 11px; letter-spacing: .4px; color: #8f7db8; }
-.brain-footer .brain-credit { margin-top: 6px; font-size: 10px; color: #6f5f96; }
-.brain-footer a { pointer-events: auto; color: #c9b0ff; text-decoration: none; }
+/* The legend doubles as a filter: picking a subject keeps its memories lit and dims the rest. */
+.brain-subjects { list-style: none; margin: 0 auto 12px; padding: 0; display: flex; flex-wrap: wrap; justify-content: center; gap: 6px; max-width: 760px; }
+.brain-subjects button { pointer-events: auto; display: flex; align-items: center; gap: 7px; min-height: 32px; padding: 5px 12px; border-radius: 999px; border: 1px solid var(--bv-line);
+  background: var(--bv-chip); color: var(--bv-ink); font: inherit; font-size: 13px; cursor: pointer; white-space: nowrap; transition: background .2s ease, border-color .2s ease, opacity .2s ease; }
+.brain-subjects button:hover { background: var(--bv-chip-on); }
+.brain-subjects button[aria-pressed='true'] { background: var(--bv-chip-on); border-color: var(--bv-accent); }
+.brain-subjects:has([aria-pressed='true']) button:not([aria-pressed='true']) { opacity: .55; }
+.brain-subjects button:focus-visible { outline: 2px solid var(--bv-accent); outline-offset: 2px; }
+.brain-subjects span { color: var(--bv-faint); }
+.brain-footer p { margin: 0; font-size: 12px; color: var(--bv-faint); }
+.brain-footer .brain-credit { margin-top: 6px; font-size: 11px; }
+.brain-footer a { pointer-events: auto; color: var(--bv-accent); text-decoration: none; }
 .brain-footer a:hover { text-decoration: underline; }
 @media (max-width: 700px) {
   .brain-header { padding: 16px 18px; }
-  .brain-subjects { gap: 4px 10px; }
-  .brain-subjects li { font-size: 11px; }
+  /* One swipeable row of subjects, so the brain keeps the screen. */
+  .brain-subjects { flex-wrap: nowrap; justify-content: flex-start; overflow-x: auto; margin: 0 -24px 10px; padding: 2px 24px; scrollbar-width: none; }
+  .brain-subjects::-webkit-scrollbar { display: none; }
+  .brain-subjects li { flex: none; }
 }
 @media (prefers-reduced-motion: reduce) { .brain-view, .brain-view.closing, .brain-view .brain-scene, .brain-view.closing .brain-scene { animation: none; } }
