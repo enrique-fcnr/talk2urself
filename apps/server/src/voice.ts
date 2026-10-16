@@ -5,7 +5,8 @@ import { emitDiagnostic, type DiagnosticSink } from './memory-diagnostics.ts';
 import { filterLanguageUpdates, languageAnalysisInput, languageAnalysisInstructions, languageSchema, languageProofSources, bindLanguageEvidence, languagePhraseSample, groundCandidateEvidence } from './language.ts';
 export type Message = { role: 'user' | 'assistant'; content: string };
 // voicePaused (CARTESIA_PAUSED=1): replies are generated as usual but spoken as silence, without calling Cartesia.
-export type VoiceConfig = { openaiKey: string; cartesiaKey: string; voiceId: string; model: string; voicePaused?: boolean };
+// currentVoice: the user's cloned voice when there is one (VOICE_CLONING=1); otherwise voiceId.
+export type VoiceConfig = { openaiKey: string; cartesiaKey: string; voiceId: string; model: string; voicePaused?: boolean; currentVoice?: () => string | undefined };
 export const openaiTranscriptionModel = 'gpt-transcribe';
 export interface VoiceProvider {
   model: string;
@@ -96,7 +97,7 @@ export function createVoiceProvider(config: VoiceConfig, fetcher: typeof fetch =
       const deadline = AbortSignal.any([signal, AbortSignal.timeout(45_000)]);
       const response = await request('Voz Cartesia', 'https://api.cartesia.ai/tts/sse', {
         method: 'POST', headers: { ...cartesiaHeaders, 'Content-Type': 'application/json', Accept: 'text/event-stream' },
-        body: JSON.stringify({ model_id: 'sonic-3.6', transcript: text, voice: config.voiceId, language: 'pt-BR',
+        body: JSON.stringify({ model_id: 'sonic-3.6', transcript: text, voice: config.currentVoice?.() ?? config.voiceId, language: 'pt-BR',
           // Cartesia rejects phoneme timestamps for Portuguese but returns word timestamps in the same generation;
           // the server reads the mouth shapes from each word's spelling and places them inside its span.
           add_phoneme_timestamps: false, add_timestamps: true, output_format: { container: 'raw', encoding: 'pcm_s16le', sample_rate: 24000 } }),
@@ -205,7 +206,7 @@ export function createVoiceProvider(config: VoiceConfig, fetcher: typeof fetch =
       if (config.voicePaused) return pausedSpeech(text).audio;
       const response = await request('Voz Cartesia', 'https://api.cartesia.ai/tts/bytes', {
         method: 'POST', headers: { ...cartesiaHeaders, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ model_id: 'sonic-3.6', transcript: text, voice: config.voiceId, language: 'pt-BR', output_format: { container: 'wav', encoding: 'pcm_s16le', sample_rate: 24000 } }),
+        body: JSON.stringify({ model_id: 'sonic-3.6', transcript: text, voice: config.currentVoice?.() ?? config.voiceId, language: 'pt-BR', output_format: { container: 'wav', encoding: 'pcm_s16le', sample_rate: 24000 } }),
       }, signal);
       const audio = Buffer.from(await response.arrayBuffer());
       if (audio.length < 44 || audio.length > 8_000_000 || audio.toString('ascii', 0, 4) !== 'RIFF' || audio.toString('ascii', 8, 12) !== 'WAVE') throw new Error('A voz retornou um áudio inválido.');

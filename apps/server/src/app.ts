@@ -9,9 +9,10 @@ import type { WebSocket } from 'ws';
 import { emitDiagnostic, type DiagnosticSink, type DiagnosticStage, type MemoryDiagnosticRecord } from './memory-diagnostics.ts';
 import { createLanguageWorker } from './language-worker.ts';
 import { originAllowed, registerWeb } from './access.ts';
+import type { VoiceCloner } from './voice-clone.ts';
 
 // webRoot: serve the built web app from there (production).
-export async function createApp(options: { voice?: VoiceProvider; memory?: MemoryService; onUsage?: (record: Record<string, string | number>) => void; onMemoryDiagnostic?: (record: MemoryDiagnosticRecord) => void; webRoot?: string } = {}) {
+export async function createApp(options: { voice?: VoiceProvider; memory?: MemoryService; onUsage?: (record: Record<string, string | number>) => void; onMemoryDiagnostic?: (record: MemoryDiagnosticRecord) => void; webRoot?: string; cloner?: VoiceCloner } = {}) {
   const app = Fastify({ logger: false, trustProxy: true });
   await app.register(websocket, { options: { maxPayload: maxRecordingBytes } });
   if (options.webRoot) registerWeb(app, options.webRoot);
@@ -47,7 +48,29 @@ export async function createApp(options: { voice?: VoiceProvider; memory?: Memor
   app.addHook('onClose', async () => { for (const socket of viewers) socket.close(); viewers.clear(); });
 
   app.get('/api/health', async () => ({ ok: true, mode: options.voice ? 'voice' : 'demo', model: options.voice?.model ?? null,
-    ...(options.memory ? { memory: 'configured' } : {}) }));
+    ...(options.memory ? { memory: 'configured' } : {}), ...(options.cloner ? { voiceClone: options.cloner.status() } : {}) }));
+  // Voice cloning (VOICE_CLONING=1): the page sends each clean take of the user's speech as 16-bit mono WAV.
+  app.addContentTypeParser('audio/wav', { parseAs: 'buffer', bodyLimit: 2 * 1024 * 1024 }, (_request, body, done) => done(null, body));
+  app.get('/api/voice', async (request, reply) => {
+    if (!originAllowed(request)) return reply.code(403).send({ error: 'Origem não autorizada.' });
+    if (!options.cloner) return { enabled: false };
+    await options.cloner.ready();
+    return options.cloner.status();
+  });
+  app.post('/api/voice/sample', async (request, reply) => {
+    if (!originAllowed(request)) return reply.code(403).send({ error: 'Origem não autorizada.' });
+    if (!options.cloner) return reply.code(404).send({ error: 'Clonagem de voz desligada.' });
+    if (!Buffer.isBuffer(request.body)) return reply.code(415).send({ error: 'Envie a amostra em WAV.' });
+    try { return await options.cloner.addTake(request.body, AbortSignal.timeout(90_000)); }
+    catch { return reply.code(503).send({ error: 'Não foi possível guardar a amostra de voz agora.' }); }
+  });
+  // "Refazer minha voz": deletes the clone and every sample; collecting starts over.
+  app.post('/api/voice/reset', async (request, reply) => {
+    if (!originAllowed(request)) return reply.code(403).send({ error: 'Origem não autorizada.' });
+    if (!options.cloner) return reply.code(404).send({ error: 'Clonagem de voz desligada.' });
+    try { return await options.cloner.reset(AbortSignal.timeout(60_000)); }
+    catch { return reply.code(503).send({ error: 'Não foi possível refazer a voz agora. Tente novamente.' }); }
+  });
   app.get('/api/memory', async (request, reply) => {
     if (!originAllowed(request)) return reply.code(403).send({ error: 'Origem não permitida.' });
     if (!options.memory) return { enabled: false };

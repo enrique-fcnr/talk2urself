@@ -1,5 +1,6 @@
 import { createApp } from './app.ts';
 import { createVoiceProvider, readVoiceConfig } from './voice.ts';
+import { createVoiceCloner, readVoiceCloneConfig } from './voice-clone.ts';
 import { appendFileSync, existsSync, mkdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { createMemoryService, readMemoryConfig } from './memory.ts';
@@ -7,6 +8,10 @@ import { serializeDiagnostic, type MemoryDiagnosticRecord } from './memory-diagn
 
 const config = readVoiceConfig();
 const memoryConfig = config ? readMemoryConfig() : null;
+// Voice cloning is off unless VOICE_CLONING=1 (and the Cartesia voice is not paused); it needs Supabase Storage.
+const cloneConfig = config && memoryConfig ? readVoiceCloneConfig() : null;
+const cloner = cloneConfig ? createVoiceCloner(cloneConfig) : undefined;
+if (config && cloner) { config.currentVoice = cloner.voiceId; void cloner.ready(); }
 const logUsage = (record: Record<string, string | number>) => {
   try {
     mkdirSync('.local', { recursive: true });
@@ -19,6 +24,7 @@ const app = await createApp({
   webRoot: existsSync(webRoot + '/index.html') ? webRoot : undefined,
   voice: config ? createVoiceProvider(config) : undefined,
   memory: memoryConfig ? createMemoryService(memoryConfig, fetch, logUsage) : undefined,
+  cloner,
   onUsage: logUsage,
   onMemoryDiagnostic: (record: MemoryDiagnosticRecord) => {
     try {
@@ -33,6 +39,7 @@ await app.listen({ host, port });
 console.log(`Talk2urself: servidor em http://${host}:${port}`);
 console.log(config ? 'Conversa por voz configurada.' : 'Prévia demonstrativa: preencha as chaves e a voz no arquivo .env para ativar as APIs.');
 if (config?.voicePaused) console.log('Voz Cartesia pausada (CARTESIA_PAUSED=1): as respostas são faladas em silêncio, sem chamar a Cartesia.');
+if (cloner) console.log('Clonagem de voz ligada (VOICE_CLONING=1): falas limpas viram sua voz após ~2,5, 10 e 20 minutos.');
 console.log(memoryConfig ? 'Memória configurada; o primeiro uso verifica o acesso ao banco.' : 'Memória persistente pendente: configure o Supabase no servidor.');
 
 async function shutdown() {

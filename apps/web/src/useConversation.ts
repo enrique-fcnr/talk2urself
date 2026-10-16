@@ -4,6 +4,7 @@ import { maxRecordingBytes, parseServerEvent, type ClientCommand, type Conversat
 import { quietPeak, recordMicrophone, type Recording } from './recorder';
 import type { AvatarPlayback, PhonemeCue } from '../../../shared/lip-sync';
 import type { GestureCue } from '../../../shared/gestures';
+import { parseCloneStatus, sendVoiceSample, type VoiceCloneStatus } from './voice-sample';
 
 export function useConversation() {
   const [state, setState] = useState<ConversationState>('idle');
@@ -21,6 +22,11 @@ export function useConversation() {
   const [waking, setWaking] = useState(false);
   // Memories the server used for the latest answer, keyed by subject slot and text.
   const [recall, setRecall] = useState<Recall | null>(null);
+  // Voice cloning status (server flag VOICE_CLONING=1); null when it is off.
+  const [voiceClone, setVoiceClone] = useState<VoiceCloneStatus | null>(null);
+  const cloneRef = useRef<VoiceCloneStatus | null>(null);
+  // The take sent for the current turn, offered as a voice sample once the server heard speech in it.
+  const lastTake = useRef<Blob | null>(null);
   const wakeTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const socketRef = useRef<WebSocket | null>(null);
   const recorderRef = useRef<Recording | null>(null);
@@ -91,6 +97,7 @@ export function useConversation() {
           if (disposed || socketRef.current !== socket) return;
           if (health.ok !== true || (health.mode !== 'voice' && health.mode !== 'demo')) throw new Error();
           setMode(health.mode); setModel(typeof health.model === 'string' ? health.model : null);
+          cloneRef.current = parseCloneStatus(health.voiceClone); setVoiceClone(cloneRef.current);
         }).catch(() => { if (!disposed && socketRef.current === socket) { setMode('loading'); setError('Não foi possível consultar a configuração. Recarregue a página.'); } });
       };
       socket.onmessage = (message) => {
@@ -111,7 +118,13 @@ export function useConversation() {
         if (event.type === 'error') { setError(event.message); setSubmitting(false); return; }
         if (event.type === 'usage') { setUsage(event.usage); return; }
         if (event.type === 'recall') { setRecall({ keys: new Set(event.memories.map(({ slot, value }) => recallKey(slot, value))), at: Date.now() }); return; }
-        if (event.type === 'transcript') { setTranscript(event.text); return; }
+        if (event.type === 'transcript') {
+          setTranscript(event.text);
+          const take = lastTake.current; lastTake.current = null;
+          // Only takes with recognized speech count toward the user's voice; failures never disturb the conversation.
+          if (take && cloneRef.current?.collecting) void sendVoiceSample(take).then((status) => { if (status) { cloneRef.current = status; setVoiceClone(status); } }).catch(() => {});
+          return;
+        }
         if (event.type === 'audio-output') { expectingAudio = true; phonemes = event.phonemes ?? []; gestures = event.gestures ?? []; return; }
         setState(event.state); setText(event.text); setSubmitting(false);
         if (event.state === 'idle') { expectingAudio = false; stopMedia(); resetMediaUi(); setTranscript(''); }
@@ -147,6 +160,7 @@ export function useConversation() {
           const socket = socketRef.current;
           if (socket?.readyState !== WebSocket.OPEN) throw new Error();
           socket.send(JSON.stringify({ type: 'audio-input', mime: blob.type, seconds })); socket.send(bytes);
+          lastTake.current = cloneRef.current?.collecting ? blob : null;
         } catch { if (current === generation.current) { setSubmitting(false); setError('Não foi possível enviar a gravação. Confira a conexão e tente novamente.'); } }
       }, (message) => { if (current === generation.current) { recorderRef.current = null; setRecording(false); setSubmitting(false); setError(message); } },
       // Hands-free: the turn ends by itself after a pause; if nothing was said, nothing is sent.
@@ -173,5 +187,12 @@ export function useConversation() {
     if (state === 'listening' && pendingRecord.current) { pendingRecord.current = false; void startRecording(); }
     else if (state !== 'speaking') pendingRecord.current = false;
   }, [state]);
-  return { state, connection, mode, model, text, transcript, error, send, waking, recording, starting, submitting, needsPlayback, usage, recall, playbackRef, unlockAudio, startRecording, finishRecording, playAnswer, micLevel, interrupt };
+  // "Refazer minha voz": the server deletes the clone and every sample, and collecting starts over.
+  async function redoVoice() {
+    const response = await fetch('/api/voice/reset', { method: 'POST' });
+    const status = response.ok ? parseCloneStatus(await response.json()) : null;
+    if (!status) throw new Error('Não foi possível refazer a voz agora. Tente novamente.');
+    cloneRef.current = status; setVoiceClone(status);
+  }
+  return { voiceClone, redoVoice, state, connection, mode, model, text, transcript, error, send, waking, recording, starting, submitting, needsPlayback, usage, recall, playbackRef, unlockAudio, startRecording, finishRecording, playAnswer, micLevel, interrupt };
 }

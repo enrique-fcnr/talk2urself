@@ -26,6 +26,9 @@ services:
       # 1 = replies in silence without calling Cartesia; 0 = voice on.
       - key: CARTESIA_PAUSED
         value: "1"
+      # Voice cloning (docs/clonagem-de-voz.md): set to "1" together with CARTESIA_PAUSED "0" on a Cartesia plan with cloning.
+      - key: VOICE_CLONING
+        value: "0"
       - key: SUPABASE_URL
         sync: false
       - key: SUPABASE_SECRET_KEY

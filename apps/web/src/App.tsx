@@ -2,6 +2,7 @@ import { lazy, Suspense, useEffect, useRef, useState, type MouseEvent } from 're
 import { useConversation } from './useConversation';
 import type { BrainProbe } from './avatar/kelly';
 import Captions from './Captions';
+import { voiceStatus } from './voice-sample';
 const Avatar3D = lazy(() => import('./avatar/Avatar3D'));
 const BrainView = lazy(() => import('./brain/BrainView'));
 // Start screen: "a smarter version of you", with the adjective cycling. Feminine forms agree with "versão".
@@ -22,7 +23,7 @@ function Icon({ name }: { name: 'mic' | 'sun' | 'moon' | 'pause' | 'close' | 'pl
   </svg>;
 }
 export default function App() {
-  const { state, connection, mode, text, transcript, error, send, waking, recording, starting, submitting, needsPlayback, recall, playbackRef, unlockAudio, startRecording, finishRecording, playAnswer, micLevel, interrupt } = useConversation();
+  const { voiceClone, redoVoice, state, connection, mode, text, transcript, error, send, waking, recording, starting, submitting, needsPlayback, recall, playbackRef, unlockAudio, startRecording, finishRecording, playAnswer, micLevel, interrupt } = useConversation();
   // Tapping the violet look's brain opens the memories inside it, growing out of the spot that was tapped.
   const brainProbe = useRef<BrainProbe | null>(null), brainLocator = useRef<(() => { x: number; y: number } | null) | null>(null), subjectTop = useRef<(() => number | null) | null>(null);
   const experience = useRef<HTMLElement>(null);
@@ -178,6 +179,11 @@ export default function App() {
       <button className="memory-entry rest-entry" onClick={() => { setSettingsOpen(false); openBrain({ x: innerWidth / 2, y: innerHeight / 2 }); }}><strong>Memórias</strong><span>Ver o cérebro e tudo o que a Kelly lembra sobre você.</span></button>
       {online && (state !== 'idle' || entryAwake) ? <button className="memory-entry rest-entry" onClick={() => { setEntryAwake(false); send('reset'); setSettingsOpen(false); }}><strong>Pôr para dormir</strong><span>Encerrar a conversa e deixar a Kelly em repouso.</span></button> : null}
       <button className="memory-entry rest-entry" role="switch" aria-checked={captions} onClick={() => setCaptions((on) => !on)}><strong>Legendas {captions ? 'ligadas' : 'desligadas'}</strong><span>Mostrar no topo, linha por linha, o que a Kelly e você dizem.</span></button>
+      {voiceClone ? <button className="memory-entry rest-entry" onClick={() => {
+        if (!confirm('Refazer sua voz? A voz atual e todas as amostras guardadas serão apagadas, e a Kelly volta a aprender sua voz do zero.')) return;
+        const notify = (message: string) => { setToast(message); setTimeout(() => setToast((current) => current === message ? '' : current), toastSeconds * 1000); };
+        void redoVoice().then(() => notify('Pronto: ela vai reaprender sua voz enquanto vocês conversam.'), (error: Error) => notify(error.message));
+      }}><strong>Refazer minha voz</strong><span>{voiceStatus(voiceClone)}</span></button> : null}
         <details><summary>Créditos dos modelos 3D</summary>
           <p>Modelo provisório <a href="https://sketchfab.com/3d-models/kelly-woman-head-with-blendshapes-938d50fda06c46109d6877c85c6ec3d2" target="_blank" rel="noreferrer">Kelly, de skullvez</a>, CC BY 4.0. Acabamento e ombros adaptados.</p>
           <p>Cérebro: <a href="https://sketchfab.com/3d-models/human-brain-cerebrum-brainstem-0aa0e33c5c854d1bab7bac9e1c7acaec" target="_blank" rel="noreferrer">Human brain, Cerebrum &amp; Brainstem, de pranktoy</a>, CC BY 4.0. Sem o tronco, malha simplificada e desenhada como holograma.</p>
