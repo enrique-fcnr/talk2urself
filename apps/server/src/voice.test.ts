@@ -525,3 +525,9 @@ test('instruções orientam o papel e a descoberta guiada sem dados pessoais', a
   assert.match(characterInstructions, /Nunca abra saúde, fé, dinheiro pessoal, família ou experiências difíceis/);
   assert.match(openingInstructions(), /papel conhecido \(assistant_role\)/);
 });
+
+test('o personagem é conciso sem teto fixo de palavras', async () => {
+  const { characterInstructions } = await import('./character.ts');
+  assert.match(characterInstructions, /CONCISÃO: diga o essencial primeiro/);
+  assert.equal(characterInstructions.includes('220 palavras'), false);
+});
