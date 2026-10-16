@@ -26,6 +26,7 @@ const app = await createApp({
 await app.listen({ host: '127.0.0.1', port: 3001 });
 console.log('Talk2urself: servidor local em http://127.0.0.1:3001');
 console.log(config ? 'Conversa por voz configurada.' : 'Prévia demonstrativa: preencha as chaves e a voz no arquivo .env para ativar as APIs.');
+if (config?.voicePaused) console.log('Voz Cartesia pausada (CARTESIA_PAUSED=1): as respostas são faladas em silêncio, sem chamar a Cartesia.');
 console.log(memoryConfig ? 'Memória configurada; o primeiro uso verifica o acesso ao banco.' : 'Memória persistente pendente: configure o Supabase no servidor.');
 
 async function shutdown() {

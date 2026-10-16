@@ -96,6 +96,12 @@ type ViewOptions = {
   onReady?: () => void;
   // Receives the brain hit test once the avatar has loaded.
   onBrainProbe?: (probe: BrainProbe) => void;
+  // Receives a function returning the brain's centre on the page (null when the look has no brain).
+  onBrainLocator?: (locate: () => { x: number; y: number } | null) => void;
+  // Called when the saved-memory count goes up while the page is open.
+  onNewMemory?: () => void;
+  // Receives a function returning the page y of the top of what is drawn (the portal or disc, else the head).
+  onSubjectTop?: (locate: () => number | null) => void;
   onError: () => void;
   interactive?: boolean;
   portrait?: boolean;
@@ -300,6 +306,8 @@ export function mountKelly(host: HTMLElement, options: ViewOptions) {
     if (seconds>0 && !reduced.matches) { action.setEffectiveWeight(0); ease(action,1,seconds); } else action.setEffectiveWeight(1);
   }
   function wakeUp() {
+    // The brain lights up as she opens her eyes.
+    if (looks[currentLook]?.crown) crown?.pulse();
     const action=actions.get('wake'); if (!action) return;
     // Keep the bowed pose frozen and gently remove its weight. The existing
     // posture underneath raises the head to face the viewer, with no overshoot.
@@ -453,7 +461,7 @@ export function mountKelly(host: HTMLElement, options: ViewOptions) {
     try {
       const data: unknown = await (await fetch('/api/memory/count',{ cache: 'no-store', signal: controller.signal })).json();
       const count=(data as { enabled?: boolean; count?: unknown })?.count;
-      if ((data as { enabled?: boolean })?.enabled && typeof count==='number' && Number.isInteger(count)) { memoryCount=count; crown?.setMemories(count); }
+      if ((data as { enabled?: boolean })?.enabled && typeof count==='number' && Number.isInteger(count)) { if (memoryCount!==null && count>memoryCount) options.onNewMemory?.(); memoryCount=count; crown?.setMemories(count); }
     } catch { /* keep the current glow */ }
   }
   function watchMemories() {
@@ -506,15 +514,24 @@ export function mountKelly(host: HTMLElement, options: ViewOptions) {
     crown=createCrown(stage,avatar.getObjectByName('head')!); applyLook(currentLook);
     if (memoryCount!==null) crown.setMemories(memoryCount);
     const ray=new THREE.Raycaster(), centre=new THREE.Vector3();
+    const brainOnPage=(rect: DOMRect)=>{ crown!.brainCentre(centre).project(camera); return { x:rect.left+(centre.x+1)/2*rect.width, y:rect.top+(1-centre.y)/2*rect.height }; };
     options.onBrainProbe?.((clientX,clientY)=>{
       if (!crown || !looks[currentLook]?.crown) return null;
       const rect=renderer.domElement.getBoundingClientRect();
       if (!rect.width || !rect.height) return null;
       ray.setFromCamera(new THREE.Vector2((clientX-rect.left)/rect.width*2-1,-((clientY-rect.top)/rect.height)*2+1),camera);
       if (!crown.hitBrain(ray)) return null;
-      crown.brainCentre(centre).project(camera);
-      return { x:rect.left+(centre.x+1)/2*rect.width, y:rect.top+(1-centre.y)/2*rect.height };
+      return brainOnPage(rect);
     });
+    const top=new THREE.Vector3();
+    options.onSubjectTop?.(()=>{
+      const rect=renderer.domElement.getBoundingClientRect();
+      if (!rect.height) return null;
+      if (crown && looks[currentLook]?.crown) crown.visualTop(top); else top.set(0,headClearance,0);
+      top.project(camera);
+      return rect.top+(1-top.y)/2*rect.height;
+    });
+    options.onBrainLocator?.(()=>crown && looks[currentLook]?.crown ? brainOnPage(renderer.domElement.getBoundingClientRect()) : null);
     resize(); options.onReady?.(); lastTime=performance.now(); if(!document.hidden)frame=requestAnimationFrame(draw);
   }).catch(()=>{if(!disposed)options.onError();});
   return () => {

@@ -1,10 +1,11 @@
 import { learningSchema, memoryContextText, validateLearning, type Learning, type MemoryContext } from './memory.ts';
 import { characterInstructions, hasContinuity, openingInstructions } from './character.ts';
-import { readTimedSpeech, type TimedSpeech } from './speech-timing.ts';
+import { pausedSpeech, readTimedSpeech, type TimedSpeech } from './speech-timing.ts';
 import { emitDiagnostic, type DiagnosticSink } from './memory-diagnostics.ts';
 import { filterLanguageUpdates, languageAnalysisInput, languageAnalysisInstructions, languageSchema, languageProofSources, bindLanguageEvidence, languagePhraseSample, groundCandidateEvidence } from './language.ts';
 export type Message = { role: 'user' | 'assistant'; content: string };
-export type VoiceConfig = { openaiKey: string; cartesiaKey: string; voiceId: string; model: string };
+// voicePaused (CARTESIA_PAUSED=1): replies are generated as usual but spoken as silence, without calling Cartesia.
+export type VoiceConfig = { openaiKey: string; cartesiaKey: string; voiceId: string; model: string; voicePaused?: boolean };
 export const openaiTranscriptionModel = 'gpt-transcribe';
 export interface VoiceProvider {
   model: string;
@@ -20,7 +21,8 @@ export interface VoiceProvider {
 export function readVoiceConfig(env: NodeJS.ProcessEnv = process.env): VoiceConfig | null {
   const { OPENAI_API_KEY: openaiKey, CARTESIA_API_KEY: cartesiaKey, CARTESIA_VOICE_ID: voiceId } = env;
   if (!openaiKey?.trim() || !cartesiaKey?.trim() || !voiceId?.trim()) return null;
-  return { openaiKey: openaiKey.trim(), cartesiaKey: cartesiaKey.trim(), voiceId: voiceId.trim(), model: env.OPENAI_MODEL?.trim() || 'gpt-6-luna' };
+  return { openaiKey: openaiKey.trim(), cartesiaKey: cartesiaKey.trim(), voiceId: voiceId.trim(), model: env.OPENAI_MODEL?.trim() || 'gpt-6-luna',
+    voicePaused: env.CARTESIA_PAUSED?.trim() === '1' };
 }
 
 const instructions = `${characterInstructions} Nesta versão sem banco, use somente o histórico desta conexão; não há busca na web nem memória persistente.`;
@@ -90,6 +92,7 @@ export function createVoiceProvider(config: VoiceConfig, fetcher: typeof fetch =
     },
     transcribe,
     async speakTimed(text, signal) {
+      if (config.voicePaused) return pausedSpeech(text);
       const deadline = AbortSignal.any([signal, AbortSignal.timeout(45_000)]);
       const response = await request('Voz Cartesia', 'https://api.cartesia.ai/tts/sse', {
         method: 'POST', headers: { ...cartesiaHeaders, 'Content-Type': 'application/json', Accept: 'text/event-stream' },
@@ -199,6 +202,7 @@ export function createVoiceProvider(config: VoiceConfig, fetcher: typeof fetch =
         outputTokens: count(usage.output_tokens), cachedTokens: count(details.cached_tokens) };
     },
     async speak(text, signal) {
+      if (config.voicePaused) return pausedSpeech(text).audio;
       const response = await request('Voz Cartesia', 'https://api.cartesia.ai/tts/bytes', {
         method: 'POST', headers: { ...cartesiaHeaders, 'Content-Type': 'application/json' },
         body: JSON.stringify({ model_id: 'sonic-3.6', transcript: text, voice: config.voiceId, language: 'pt-BR', output_format: { container: 'wav', encoding: 'pcm_s16le', sample_rate: 24000 } }),

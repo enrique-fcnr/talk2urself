@@ -159,7 +159,11 @@ h1 { font-size: clamp(23px, 2.6vw, 35px); line-height: 1.3; letter-spacing: -1.1
 /* Short phones: the promises go first, so the headline, Kelly and the button still fit. */
 @media (max-height: 640px) { .start-promises { display: none; } .start-note { font-size: 10px; } }
 /* Clean screen: only Kelly and, at the top right, the gear and theme buttons. */
-.app[data-started='true'] .header { justify-content: flex-end; border-bottom-color: transparent; }
+/* As Kelly wakes, the wordmark and the header rule fade out with the copy instead of vanishing at the end. */
+.header { transition: border-color .6s ease; }
+.wordmark { transition: opacity .5s ease, visibility 0s linear 0s; }
+.app[data-leaving='true'] .header, .app[data-started='true'] .header { border-bottom-color: transparent; }
+.app[data-leaving='true'] .wordmark, .app[data-started='true'] .wordmark { opacity: 0; visibility: hidden; pointer-events: none; transition: opacity .5s ease, visibility 0s linear .5s; }
 .avatar:not(:disabled) { cursor: pointer; }
 .avatar[aria-disabled='true']:not([data-over-brain='true']) { cursor: default; }
 /* While recording, the light around her breathes so the user knows she is listening. */
@@ -171,29 +175,9 @@ h1 { font-size: clamp(23px, 2.6vw, 35px); line-height: 1.3; letter-spacing: -1.1
 .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap; }
 /* Keep the render surface fixed through entry; only the 3D camera eases the framing. */
 .avatar-stage { transition: none; }
-.character-status { position: absolute; z-index: 9; right: clamp(20px, 3.2vw, 56px); bottom: max(24px, env(safe-area-inset-bottom)); display: flex; align-items: center; gap: 12px; padding: 12px 18px; border: 1px solid var(--line); border-radius: 30px; background: var(--glass); backdrop-filter: blur(18px); color: var(--muted); font-size: 12px; font-weight: 500; box-shadow: 0 6px 24px #57377c08; pointer-events: none; animation: status-enter .5s ease both; }
-.character-status-motion { position: relative; width: 26px; height: 22px; display: flex; justify-content: center; align-items: center; gap: 3px; color: var(--accent); }
-.character-status-motion i { display: block; width: 3px; height: 6px; border-radius: 3px; background: currentColor; transform-origin: center; }
-.character-status-motion i:nth-child(2), .character-status-motion i:nth-child(4) { height: 12px; animation-delay: -.25s; }
-.character-status-motion i:nth-child(3) { height: 18px; animation-delay: -.5s; }
-.character-status[data-activity='listening'] i { animation: status-wave 1.3s ease-in-out infinite; }
-.character-status[data-activity='speaking'] i { animation: status-wave .55s ease-in-out infinite; }
-.character-status[data-activity='listening'] i:nth-child(2), .character-status[data-activity='speaking'] i:nth-child(2) { animation-delay: -.15s; }
-.character-status[data-activity='listening'] i:nth-child(3), .character-status[data-activity='speaking'] i:nth-child(3) { animation-delay: -.3s; }
-.character-status[data-activity='listening'] i:nth-child(4), .character-status[data-activity='speaking'] i:nth-child(4) { animation-delay: -.45s; }
-.character-status[data-activity='listening'] i:nth-child(5), .character-status[data-activity='speaking'] i:nth-child(5) { animation-delay: -.2s; }
-.character-status[data-activity='resting'] i, .character-status[data-activity='offline'] i, .character-status[data-activity='thinking'] i { display: none; }
-.character-status[data-activity='resting'] i:first-child, .character-status[data-activity='offline'] i:first-child { display: block; width: 7px; height: 7px; border-radius: 50%; animation: status-breathe 3s ease-in-out infinite; }
-.character-status[data-activity='offline'] .character-status-motion { color: var(--faint); }
-.character-status[data-activity='thinking'] .character-status-motion::after { content: ''; width: 17px; height: 17px; border: 1px solid var(--line); border-top-color: var(--accent); border-right-color: var(--accent); border-radius: 50%; animation: status-orbit 1.6s linear infinite; }
-.app[data-started='true'] .toast { bottom: 88px; }
-@keyframes status-wave { 0%, 100% { transform: scaleY(.4); opacity: .55; } 50% { transform: scaleY(1); opacity: 1; } }
-@keyframes status-breathe { 0%, 100% { opacity: .5; box-shadow: 0 0 0 3px #a585ff08; } 50% { opacity: 1; box-shadow: 0 0 0 6px #a585ff18; } }
-@keyframes status-orbit { to { transform: rotate(360deg); } }
-@keyframes status-enter { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+.app[data-started='true'] .toast { bottom: 28px; }
 @media (max-width: 700px) {
   .start-screen { padding-top: 2.5svh; }
-  .character-status { right: 16px; bottom: max(16px, env(safe-area-inset-bottom)); padding: 10px 14px; gap: 9px; font-size: 11px; }
 }
 /* The stage spans the whole page under the header, so Kelly sits centred between the headline and the wake button,
    and keeps that size and place once she is awake. */
@@ -220,4 +204,34 @@ h1 { font-size: clamp(23px, 2.6vw, 35px); line-height: 1.3; letter-spacing: -1.1
   .start-actions { position: static; align-items: flex-start; padding: 0; margin-top: 40px; }
   .start-note { text-align: left; }
   .start-screen.leaving .start-actions { transform: translateY(8px); }
+}
+/* Live captions: one line at a time, centred in the gap between the top of the stage and Kelly's portal (its top is
+   set from script). No box: words emerge one by one from a blur and dissolve the same way as the next line comes. */
+.captions { position: absolute; z-index: 6; top: 12%; left: 50%; width: min(820px, calc(100vw - 40px)); height: 1.6em; transform: translate(-50%, -50%); font-size: clamp(17px, 1.7vw, 23px); text-align: center; pointer-events: none; }
+.caption { position: absolute; inset: 0; margin: 0; line-height: 1.5; white-space: nowrap; color: var(--ink); letter-spacing: -.2px; font-weight: 400;
+  -webkit-mask-image: linear-gradient(90deg, transparent, #000 6%, #000 94%, transparent); mask-image: linear-gradient(90deg, transparent, #000 6%, #000 94%, transparent); }
+.caption-word { display: inline-block; margin: 0 .14em; opacity: .88; animation: word-emerge .9s cubic-bezier(.16, .84, .3, 1) calc(var(--i) * 45ms) both; }
+.caption.leaving .caption-word { animation: word-dissolve .75s cubic-bezier(.5, 0, .75, .4) calc(var(--i) * 28ms) both; }
+.caption[data-who='you'] { color: var(--muted); }
+.caption-who { display: inline-block; margin-right: 10px; font-size: .58em; font-weight: 600; letter-spacing: 1.8px; text-transform: uppercase; vertical-align: .16em; color: var(--accent); animation: word-emerge .7s ease both; }
+@keyframes word-emerge { from { opacity: 0; filter: blur(10px); transform: translateY(.45em) scale(.96); letter-spacing: .08em; } }
+@keyframes word-dissolve { to { opacity: 0; filter: blur(12px); transform: translate(var(--drift), -.55em) scale(1.04); letter-spacing: .1em; } }
+@media (prefers-reduced-motion: reduce) { .caption-word, .caption.leaving .caption-word { animation: none; } .caption.leaving { display: none; } }
+/* Memory moments: a small tag over Kelly's head, from her brain. */
+.memory-moment { position: fixed; z-index: 9; margin: 0; display: flex; align-items: center; gap: 8px; max-width: min(320px, calc(100vw - 32px)); padding: 7px 14px 7px 11px; border: 1px solid var(--line); border-radius: 999px; background: var(--glass); backdrop-filter: blur(16px); box-shadow: 0 8px 26px #57377c14; color: var(--muted); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; pointer-events: none; transform: translate(-50%, -100%); animation: moment-in .5s cubic-bezier(.2, .7, .2, 1) both, moment-out .6s ease 4.2s both; }
+.memory-moment[data-kind='new'] { animation: moment-in .5s cubic-bezier(.2, .7, .2, 1) both, moment-out .6s ease 2.6s both; }
+.memory-moment i { flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 10px var(--accent); }
+.memory-moment strong { flex: none; color: var(--ink); font-weight: 500; }
+.memory-moment span { flex: none; color: var(--accent); font-weight: 500; }
+@keyframes moment-in { from { opacity: 0; transform: translate(-50%, calc(-100% + 14px)) scale(.92); filter: blur(4px); } }
+@keyframes moment-out { to { opacity: 0; transform: translate(-50%, calc(-100% - 10px)); filter: blur(4px); } }
+@media (max-width: 700px) { .captions { font-size: 17px; } .memory-moment { font-size: 11px; } }
+.caption[data-who='hint'] { color: var(--muted); font-size: .86em; }
+.caption-pulse { position: relative; display: inline-block; width: 8px; height: 8px; margin-right: 12px; border-radius: 50%; background: var(--accent); vertical-align: .12em; animation: word-emerge .7s ease both; }
+.caption-pulse::after { content: ''; position: absolute; inset: -5px; border-radius: 50%; border: 1.5px solid var(--accent); animation: hint-ring 1.8s ease-out infinite; }
+@keyframes hint-ring { from { opacity: .8; transform: scale(.6); } to { opacity: 0; transform: scale(1.9); } }
+/* In conversation Kelly sits low; her shoulders dissolve over a longer stretch so the cut of the bust never shows. */
+.app[data-started='true'] .avatar-3d canvas {
+  -webkit-mask-image: linear-gradient(to top, transparent calc(var(--fade-bottom, 0px) + 4px), #000 calc(var(--fade-bottom, 0px) + 230px));
+  mask-image: linear-gradient(to top, transparent calc(var(--fade-bottom, 0px) + 4px), #000 calc(var(--fade-bottom, 0px) + 230px));
 }

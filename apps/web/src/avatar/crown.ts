@@ -21,10 +21,14 @@ export type Crown = {
   setVisible(visible: boolean): void;
   // Saved memories light the brain up; a new one also sends a brighter pulse through it.
   setMemories(count: number): void;
+  // One bright beat through the brain (Kelly waking up).
+  pulse(): void;
   // A dark night-sky circle behind the disc, for light pages; the scene itself stays as on the dark theme.
   setPortal(on: boolean): void;
   // Grow the portal (1 = framing the disc); on phones it is enlarged into a night backdrop that runs past the edges.
   setPortalScale(scale: number): void;
+  // The highest visible point of the decoration (the portal's rim, or the disc without it), in scene units.
+  visualTop(target: THREE.Vector3): THREE.Vector3;
   // Whether a ray from the camera touches the brain (with a little slack, so the slot is easy to tap), and where its centre is.
   hitBrain(ray: THREE.Raycaster): boolean;
   brainCentre(target: THREE.Vector3): THREE.Vector3;
@@ -182,12 +186,16 @@ export function createCrown(stage: THREE.Object3D, head: THREE.Object3D): Crown 
     setVisible(visible) { disc.visible = cortex.visible = ring.visible = visible; portal.visible = visible && portalWanted; },
     setPortal(on) { portalWanted = on; portal.visible = on && disc.visible; },
     setPortalScale(scale) { portal.scale.setScalar(scale); },
+    visualTop(target) {
+      return portal.visible ? target.set(0, portal.position.y + portalRadius * portal.scale.y, portal.position.z) : target.set(0, disc.position.y + 1.05, disc.position.z);
+    },
     hitBrain(ray) {
       if (!cortex.visible) return false;
       cortex.getWorldPosition(hitSphere.center); hitSphere.radius = hitRadius * cortex.getWorldScale(hitScale).x;
       return ray.ray.intersectsSphere(hitSphere);
     },
     brainCentre(target) { return cortex.getWorldPosition(target); },
+    pulse() { flash = 1; },
     setMemories(count) {
       if (known !== null && count > known) flash = 1;
       known = count; targetLevel = brainLevel(count);

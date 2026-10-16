@@ -1,6 +1,7 @@
 import { lazy, Suspense, useEffect, useRef, useState, type MouseEvent } from 'react';
 import { useConversation } from './useConversation';
 import type { BrainProbe } from './avatar/kelly';
+import Captions from './Captions';
 const Avatar3D = lazy(() => import('./avatar/Avatar3D'));
 const BrainView = lazy(() => import('./brain/BrainView'));
 // Start screen: "a smarter version of you", with the adjective cycling. Feminine forms agree with "versão".
@@ -21,9 +22,32 @@ function Icon({ name }: { name: 'mic' | 'sun' | 'moon' | 'pause' | 'close' | 'pl
   </svg>;
 }
 export default function App() {
-  const { state, connection, mode, text, transcript, error, send, waking, recording, starting, submitting, needsPlayback, recall, playbackRef, startRecording, finishRecording, playAnswer } = useConversation();
+  const { state, connection, mode, text, transcript, error, send, waking, recording, starting, submitting, needsPlayback, recall, playbackRef, unlockAudio, startRecording, finishRecording, playAnswer } = useConversation();
   // Tapping the violet look's brain opens the memories inside it, growing out of the spot that was tapped.
-  const brainProbe = useRef<BrainProbe | null>(null);
+  const brainProbe = useRef<BrainProbe | null>(null), brainLocator = useRef<(() => { x: number; y: number } | null) | null>(null), subjectTop = useRef<(() => number | null) | null>(null);
+  const experience = useRef<HTMLElement>(null);
+  // Captions sit halfway between the top of the stage and the top of Kelly's portal (or her head).
+  const captionCentre = () => { const top = subjectTop.current?.(), area = experience.current?.getBoundingClientRect(); return top && area ? Math.max(24, (top - area.top) / 2) : null; };
+  // Live captions at the top, on by default; the choice is remembered on this browser.
+  const [captions, setCaptions] = useState(() => { try { return localStorage.getItem('talk2urself-captions') !== '0'; } catch { return true; } });
+  useEffect(() => { try { localStorage.setItem('talk2urself-captions', captions ? '1' : '0'); } catch { /* Captions work without storage. */ } }, [captions]);
+  // Memory moments: a small tag over Kelly's head when she draws on a memory to answer, or learns a new one.
+  const [moment, setMoment] = useState<{ id: number; kind: 'recall' | 'new'; text: string; extra: number; x: number; y: number } | null>(null);
+  function showMoment(kind: 'recall' | 'new', text: string, extra = 0) {
+    const brain = brainLocator.current?.(), width = Math.min(320, innerWidth - 32);
+    const x = Math.min(Math.max(brain?.x ?? innerWidth / 2, 16 + width / 2), innerWidth - 16 - width / 2);
+    setMoment({ id: Date.now(), kind, text, extra, x, y: brain ? brain.y - 64 : innerHeight * .22 });
+  }
+  useEffect(() => {
+    if (!moment) return;
+    const timer = setTimeout(() => setMoment(null), moment.kind === 'new' ? 3200 : 4800);
+    return () => clearTimeout(timer);
+  }, [moment]);
+  useEffect(() => {
+    if (!started || !recall?.keys.size) return;
+    const [first] = recall.keys, value = first.split('\u0000')[1] ?? '';
+    showMoment('recall', value.length > 46 ? `${value.slice(0, 44).trimEnd()}…` : value, recall.keys.size - 1);
+  }, [recall]);
   const [brainOrigin, setBrainOrigin] = useState<{ x: number; y: number } | null>(null), [overBrain, setOverBrain] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [started, setStarted] = useState(false), [leaving, setLeaving] = useState(false), [wordIndex, setWordIndex] = useState(0);
@@ -60,12 +84,26 @@ export default function App() {
     const timer = setTimeout(() => setToast(''), toastSeconds * 1000);
     return () => clearTimeout(timer);
   }, [error]);
+  // Waking is one step: the copy leaves while the conversation starts and Kelly greets the user. The tap also
+  // unlocks audio, so her greeting may play when it arrives. Offline, she only wakes on screen and a later tap starts.
+  const [greeting, setGreeting] = useState(false);
   function begin() {
     if (leaving) return;
     setLeaving(true);
-    setEntryAwake(true);
+    unlockAudio();
+    if (connection === 'online' && mode !== 'loading' && state === 'idle') { setGreeting(true); send('start'); }
+    else setEntryAwake(true);
     setTimeout(() => setStarted(true), exitSeconds * 1000);
   }
+  useEffect(() => { if (greeting && (state === 'listening' || state === 'idle' && !waking) && !needsPlayback) setGreeting(false); }, [greeting, state, waking, needsPlayback]);
+  useEffect(() => { if (error) setGreeting(false); }, [error]);
+  // Until the first recording, a hint under Kelly says how to talk to her; it never comes back afterwards.
+  const [hasSpoken, setHasSpoken] = useState(() => { try { return localStorage.getItem('talk2urself-spoke') === '1'; } catch { return false; } });
+  useEffect(() => {
+    if (!recording || hasSpoken) return;
+    setHasSpoken(true);
+    try { localStorage.setItem('talk2urself-spoke', '1'); } catch { /* The hint may show again next visit. */ }
+  }, [recording, hasSpoken]);
   const [theme, setTheme] = useState<Theme>(() => {
     try { return localStorage.getItem('talk2urself-theme') === 'dark' ? 'dark' : 'light'; } catch { return 'light'; }
   });
@@ -83,8 +121,11 @@ export default function App() {
     : ({ idle: 'Em repouso', listening: 'Pronto para ouvir', thinking: 'Refletindo', speaking: 'Respondendo' })[state];
   const activity = !online ? 'offline' : recording ? 'listening' : waking || submitting || state === 'thinking' ? 'thinking'
     : state === 'speaking' && !needsPlayback ? 'speaking' : 'resting';
-  const activityLabel = !online ? status : needsPlayback ? 'Áudio pronto' : starting ? 'Preparando microfone' : waking ? 'Despertando'
-    : ({ offline: '', listening: 'Ouvindo', speaking: 'Falando', thinking: 'Refletindo', resting: 'Em repouso' })[activity];
+  const activityLabel = !online ? status : needsPlayback ? 'Áudio pronto' : starting ? 'Preparando microfone'
+    : waking || greeting && activity === 'thinking' ? 'Despertando…'
+    : activity === 'resting' ? state === 'listening' ? 'Pronta para ouvir' : entryAwake ? 'Acordada' : 'Em repouso'
+    : ({ offline: '', listening: 'Ouvindo', speaking: 'Falando', thinking: 'Refletindo' })[activity];
+  const showTalkHint = started && online && mode === 'voice' && state === 'listening' && !recording && !starting && !submitting && !needsPlayback && !hasSpoken;
   // Kelly herself is the control: wake her, start and send a recording, or play a reply the browser held back.
   const avatarLabel = needsPlayback ? 'Tocar resposta' : state === 'idle' ? entryAwake ? 'Começar conversa' : 'Despertar' : starting ? 'Acessando microfone'
     : busy ? 'Aguarde a resposta' : mode === 'demo' ? 'Simular pergunta' : recording ? 'Enviar fala' : 'Começar a falar';
@@ -94,14 +135,14 @@ export default function App() {
     if (brainAt) { setOverBrain(false); setBrainOrigin(brainAt); return; }
     if (!avatarReady) return;
     if (needsPlayback) void playAnswer();
-    else if (state === 'idle') send('start');
+    else if (state === 'idle') { unlockAudio(); send('start'); }
     else if (mode === 'demo') send('submit-demo');
     else if (recording) finishRecording();
     else void startRecording();
   }
-  return <div className="app" data-theme={theme} data-state={state} data-waking={waking} data-recording={recording} data-started={started}>
+  return <div className="app" data-theme={theme} data-state={state} data-waking={waking} data-recording={recording} data-started={started} data-leaving={leaving}>
     <header className="header">
-      {started ? null : <a className="wordmark" href="/" aria-label="Talk2urself — início">talk<span>2</span>urself<span className="brand-dot">.</span></a>}
+      <a className="wordmark" href="/" aria-label="Talk2urself — início" tabIndex={leaving ? -1 : undefined}>talk<span>2</span>urself<span className="brand-dot">.</span></a>
       <nav className="header-actions" aria-label="Navegação principal">
         <button className="settings-toggle" aria-label="Abrir configurações" title="Configurações" aria-expanded={settingsOpen} aria-controls="experience-panel" onClick={() => setSettingsOpen((open) => !open)}><Icon name="gear" /></button>
         <button className="theme-toggle" aria-label={theme === 'light' ? 'Ativar tema escuro' : 'Ativar tema claro'} title={theme === 'light' ? 'Tema escuro' : 'Tema claro'} aria-pressed={theme === 'dark'} onClick={() => setTheme(theme === 'light' ? 'dark' : 'light')}><Icon name={theme === 'light' ? 'moon' : 'sun'} /></button>
@@ -111,12 +152,13 @@ export default function App() {
       <div className="panel-heading"><strong>Configurações</strong><button className="panel-close" aria-label="Fechar painel" onClick={() => setSettingsOpen(false)}><Icon name="close" /></button></div>
       <button className="memory-entry rest-entry" onClick={() => { setSettingsOpen(false); setBrainOrigin({ x: innerWidth / 2, y: innerHeight / 2 }); }}><strong>Memórias</strong><span>Ver o cérebro e tudo o que a Kelly lembra sobre você.</span></button>
       {online && (state !== 'idle' || entryAwake) ? <button className="memory-entry rest-entry" onClick={() => { setEntryAwake(false); send('reset'); setSettingsOpen(false); }}><strong>Pôr para dormir</strong><span>Encerrar a conversa e deixar a Kelly em repouso.</span></button> : null}
+      <button className="memory-entry rest-entry" role="switch" aria-checked={captions} onClick={() => setCaptions((on) => !on)}><strong>Legendas {captions ? 'ligadas' : 'desligadas'}</strong><span>Mostrar no topo, linha por linha, o que a Kelly e você dizem.</span></button>
         <details><summary>Créditos dos modelos 3D</summary>
           <p>Modelo provisório <a href="https://sketchfab.com/3d-models/kelly-woman-head-with-blendshapes-938d50fda06c46109d6877c85c6ec3d2" target="_blank" rel="noreferrer">Kelly, de skullvez</a>, CC BY 4.0. Acabamento e ombros adaptados.</p>
           <p>Cérebro: <a href="https://sketchfab.com/3d-models/human-brain-cerebrum-brainstem-0aa0e33c5c854d1bab7bac9e1c7acaec" target="_blank" rel="noreferrer">Human brain, Cerebrum &amp; Brainstem, de pranktoy</a>, CC BY 4.0. Sem o tronco, malha simplificada e desenhada como holograma.</p>
         </details>
     </aside> : null}
-    <main className="experience">
+    <main className="experience" ref={experience}>
       {started ? null : <div className={`start-screen ${leaving ? 'leaving' : ''}`}>
         <button className="start-hit-area" aria-hidden="true" tabIndex={-1} onClick={begin} disabled={leaving} />
         <section ref={topContent} className="start-content" aria-label="Conheça o talk2urself" data-ready={memories !== undefined}>
@@ -146,13 +188,16 @@ export default function App() {
         <button className="avatar" aria-label={avatarLabel} aria-disabled={!avatarReady} disabled={!started || !online} data-over-brain={overBrain} title={overBrain ? 'Ver memórias' : undefined} onClick={avatarAction}
           onPointerMove={(event) => { const over = started && !recording && event.pointerType === 'mouse' && !!brainProbe.current?.(event.clientX, event.clientY); if (over !== overBrain) setOverBrain(over); }}
           onPointerLeave={() => setOverBrain(false)}>
-          <Suspense fallback={null}><Avatar3D state={avatarState} recording={recording} playbackRef={playbackRef} clearOf={topContent} theme={theme} brainProbe={brainProbe} clearBelow={bottomContent} holdLayout={leaving || started} aside={wide && !leaving && !started} /></Suspense>
+          <Suspense fallback={null}><Avatar3D state={avatarState} recording={recording} playbackRef={playbackRef} clearOf={topContent} theme={theme} brainProbe={brainProbe} clearBelow={bottomContent} holdLayout={leaving || started} restBelow={started ? 28 : undefined} aside={wide && !leaving && !started}
+            brainLocator={brainLocator} subjectTop={subjectTop} onNewMemory={() => { if (started) showMoment('new', 'nova memória'); }} /></Suspense>
         </button>
       </div>
-      {started || leaving ? <div className="character-status" data-activity={activity} role="status" aria-atomic="true">
-        <span className="character-status-motion" aria-hidden="true"><i /><i /><i /><i /><i /></span>
-        <span>{activityLabel}</span>
-      </div> : null}
+      {/* No status pill: Kelly's own motion and the captions show what is happening; screen readers still hear it. */}
+      {started || leaving ? <span className="sr-only" role="status" aria-atomic="true">{activityLabel}</span> : null}
+      {started && captions ? <Captions text={text} transcript={transcript} speaking={state === 'speaking' && !needsPlayback} thinking={state === 'thinking' || submitting} playbackRef={playbackRef} place={captionCentre} hint={showTalkHint ? 'Toque nela para falar' : undefined} /> : null}
+      {moment ? <p className="memory-moment" data-kind={moment.kind} key={moment.id} aria-hidden="true" style={{ left: moment.x, top: moment.y }}>
+        <i />{moment.kind === 'recall' ? <><strong>lembrou</strong>{moment.text}{moment.extra ? <span>+{moment.extra}</span> : null}</> : <strong>{moment.text}</strong>}
+      </p> : null}
       {started && toast ? <p className="toast" role="alert">{toast}</p> : null}
       {brainOrigin ? <Suspense fallback={null}><BrainView origin={brainOrigin} recall={recall} onClose={() => setBrainOrigin(null)} /></Suspense> : null}
     </main>

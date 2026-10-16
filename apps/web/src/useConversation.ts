@@ -26,6 +26,8 @@ export function useConversation() {
   const recorderRef = useRef<Recording | null>(null);
   const playerRef = useRef<{ audio: HTMLAudioElement; url: string } | null>(null);
   const playbackRef = useRef<AvatarPlayback | null>(null);
+  // One audio element for every reply, unlocked by the user's first tap so a reply arriving seconds later may play.
+  const speaker = useRef<HTMLAudioElement | null>(null);
   const generation = useRef(0);
   const startingRef = useRef(false);
 
@@ -34,7 +36,7 @@ export function useConversation() {
     const player = playerRef.current;
     if (player) {
       player.audio.onended = null; player.audio.onerror = null; player.audio.pause();
-      player.audio.removeAttribute('src'); URL.revokeObjectURL(player.url); playerRef.current = null;
+      player.audio.removeAttribute('src'); player.audio.load(); URL.revokeObjectURL(player.url); playerRef.current = null;
     }
   }
   function stopMedia() {
@@ -53,6 +55,13 @@ export function useConversation() {
       }
       socketRef.current.send(JSON.stringify({ type: 'command', command }));
     }
+  }
+  // Call inside a tap: plays a moment of silence on the shared element, which browsers then allow to play later.
+  function unlockAudio() {
+    if (speaker.current) return;
+    const audio = new Audio(); speaker.current = audio;
+    audio.src = 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAIA+AAACABAAZGF0YQAAAAA=';
+    void audio.play().catch(() => { /* A later reply falls back to the play button. */ });
   }
   async function playAnswer() {
     const player = playerRef.current;
@@ -90,7 +99,7 @@ export function useConversation() {
           if (!expectingAudio) return;
           expectingAudio = false; clearPlayer();
           const url = URL.createObjectURL(new Blob([message.data], { type: 'audio/wav' }));
-          const audio = new Audio(url); const player = { audio, url }; playerRef.current = player;
+          const audio = speaker.current ?? new Audio(); audio.src = url; const player = { audio, url }; playerRef.current = player;
           playbackRef.current = { audio, cues: phonemes, gestures }; phonemes = []; gestures = [];
           audio.onended = () => { if (playerRef.current === player) { clearPlayer(); setNeedsPlayback(false); send('playback-ended'); } };
           audio.onerror = () => { if (playerRef.current === player) { clearPlayer(); setNeedsPlayback(false); setError('Não foi possível reproduzir a resposta.'); send('playback-ended'); } };
@@ -150,5 +159,5 @@ export function useConversation() {
     } finally { if (current === generation.current) { startingRef.current = false; setStarting(false); } }
   }
   function finishRecording() { recorderRef.current?.finish(); }
-  return { state, connection, mode, model, text, transcript, error, send, waking, recording, starting, submitting, needsPlayback, usage, recall, playbackRef, startRecording, finishRecording, playAnswer };
+  return { state, connection, mode, model, text, transcript, error, send, waking, recording, starting, submitting, needsPlayback, usage, recall, playbackRef, unlockAudio, startRecording, finishRecording, playAnswer };
 }

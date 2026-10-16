@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readTimedSpeech } from './speech-timing.ts';
+import { pausedSpeech, readTimedSpeech } from './speech-timing.ts';
 import { createVoiceProvider } from './voice.ts';
 import { mouthPoseAt, parsePhonemeCues } from '../../../shared/lip-sync.ts';
 import { parseServerEvent } from '../../../shared/protocol.ts';
@@ -93,4 +93,21 @@ test('lábios apertam no p, arredondam no u e antecipam a vogal seguinte',()=>{
   assert.ok(mouthPoseAt(cues,.6,true).LipsPucker!>.4,'u faz bico');
   assert.ok(mouthPoseAt(cues,.43,true).LipsPucker!>.2,'o t/n antes do u já arredonda os lábios');
   assert.equal(mouthPoseAt(cues,.2,true).LipsPucker,undefined,'a não arredonda');
+});
+
+test('voz pausada devolve silêncio com a duração da fala e movimentos de boca, sem chamar a Cartesia', async () => {
+  const speech = pausedSpeech('Oi! Que bom te ver de novo, como foi o seu dia?');
+  const seconds = (speech.audio.length - 44) / 2 / 24000;
+  assert.equal(speech.audio.toString('ascii', 0, 4), 'RIFF');
+  assert.ok(seconds > 2 && seconds < 6, `duração plausível: ${seconds}`);
+  assert.ok(speech.audio.subarray(44).every((byte) => byte === 0), 'áudio silencioso');
+  assert.ok(speech.phonemes.length > 10 && speech.phonemes.every((cue) => cue.end <= seconds));
+  const fetches: string[] = [];
+  const original = globalThis.fetch;
+  globalThis.fetch = (async (url: string) => { fetches.push(String(url)); throw new Error('no network'); }) as typeof fetch;
+  try {
+    const voice = createVoiceProvider({ openaiKey: 'k', cartesiaKey: 'c', voiceId: 'v', model: 'm', voicePaused: true });
+    const timed = await voice.speakTimed!('Tudo certo.', AbortSignal.timeout(1000));
+    assert.ok(timed.audio.length > 44); assert.deepEqual(fetches, []);
+  } finally { globalThis.fetch = original; }
 });

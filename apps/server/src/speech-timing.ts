@@ -115,3 +115,19 @@ export async function readTimedSpeech(response: Response, signal: AbortSignal): 
     await reader.cancel().catch(() => {}); reader.releaseLock();
   }
 }
+
+// Voice paused (CARTESIA_PAUSED=1): no call to the voice provider. Silence as long as the text would take to say,
+// with word timings estimated from spelling, so Kelly still mouths the words and the conversation flow is unchanged.
+export function pausedSpeech(text: string): TimedSpeech {
+  const charSeconds = 1 / 14, gapSeconds = .06, words: WordTiming[] = [];
+  let at = .15;
+  for (const word of text.split(/\s+/).filter(Boolean)) {
+    const length = Array.from(word.replace(/[^\p{L}\p{N}]/gu, '')).length;
+    if (!length) continue;
+    words.push({ word, start: at, end: at + length * charSeconds });
+    at += length * charSeconds + gapSeconds + (/[.!?…]$/.test(word) ? .35 : /[,;:]$/.test(word) ? .15 : 0);
+  }
+  const seconds = Math.min(30, Math.max(.6, at + .2));
+  return { audio: pcmToWav(Buffer.alloc(Math.round(seconds * sampleRate) * 2)), phonemes: parsePhonemeCues(wordVisemes(words)) ?? [] };
+}
+
