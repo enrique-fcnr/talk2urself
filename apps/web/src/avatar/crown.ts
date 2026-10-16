@@ -50,7 +50,8 @@ const cut = { point: new THREE.Vector3(0, .6, 0), normal: new THREE.Vector3(0, -
 // Memories at which the brain reaches full brightness. The curve is logarithmic, so the first ones show the most.
 export const fullBrainMemories = 100;
 export const brainLevel = (count: number) => Math.min(1, Math.log1p(Math.max(0, count)) / Math.log1p(fullBrainMemories));
-export const brain = { centre: new THREE.Vector3(0, .66, -.06), radii: new THREE.Vector3(.27, .21, .3) };
+// x matches the skull's centre line, which sits slightly right of the scene's axis in the model.
+export const brain = { centre: new THREE.Vector3(.025, .66, -.06), radii: new THREE.Vector3(.27, .21, .3) };
 const orbit = { centre: new THREE.Vector3(0, .8, -.04), radius: .62, tilt: new THREE.Euler(.16, 0, -.12) };
 const spheres = [
   { size: .07, speed: .45, phase: 0 }, { size: .05, speed: .45, phase: 1.3 }, { size: .062, speed: .45, phase: 2.5 },
