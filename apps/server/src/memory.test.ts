@@ -297,3 +297,11 @@ test('contagem de memórias pede só o total ao Supabase e lê o Content-Range',
   const broken: typeof fetch = async () => new Response('[]', { status: 200 });
   await assert.rejects(createMemoryService({ url: 'https://example.supabase.co', secret: 'sb_secret_test', userId, openaiKey: 'test' }, broken).count!(new AbortController().signal));
 });
+
+test('lacunas seguem a ordem de descoberta, começam pelo papel e nunca incluem temas sensíveis', async () => {
+  const { discoveryOrder, initialCategories } = await import('./categories.ts');
+  assert.equal(initialCategories.some(([key]) => key === 'assistant_role'), true);
+  assert.deepEqual(discoveryOrder.slice(0, 4), ['identity', 'assistant_role', 'work', 'goals']);
+  for (const sensitive of ['difficult_experiences', 'life_events', 'expressions', 'reasoning_style']) assert.equal((discoveryOrder as readonly string[]).includes(sensitive), false);
+  assert.equal(discoveryOrder.every((key) => initialCategories.some(([category]) => category === key)), true);
+});

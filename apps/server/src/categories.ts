@@ -17,7 +17,12 @@ export const initialCategories = [
   ['speaking_preferences', 'Conversa', 'Preferências sobre a maneira de conversar', 300],
   ['expressions', 'Expressões', 'Expressões recorrentes em várias falas', 305],
   ['reasoning_style', 'Raciocínio', 'Maneira observada de avaliar decisões', 285],
+  ['assistant_role', 'Meu papel', 'O que o usuário quer que o personagem faça por ele: planejar, cobrar, ter ideias, decidir', 65],
 ] as const;
+// Order in which the character discovers missing topics across visits (one per visit, after what the user brings).
+// Sensitive topics and patterns that are only observed are never asked about, so they are not gaps to pursue.
+export const discoveryOrder = ['identity', 'assistant_role', 'work', 'goals', 'constraints', 'routine', 'principles',
+  'studies', 'interests', 'friends', 'family', 'personal_life', 'preferences', 'speaking_preferences'] as const;
 export const categoryForProfile: Record<string, string> = { name: 'identity', life_context: 'identity',
   ...Object.fromEntries(initialCategories.map(([key]) => [key, key])) };
 const aliases: Record<string, string> = { estudo: 'studies', estudos: 'studies', educacao: 'studies', education: 'studies',

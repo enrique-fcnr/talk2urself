@@ -259,7 +259,8 @@ test('abertura vazia não chama LLM e retorno mantém dados pessoais fora das in
   });
   const signal = new AbortController().signal;
   const empty: MemoryContext = { summary: '', profile: [], relevant: [], recent: [], gaps: ['name'], version: 3 };
-  assert.equal((await voice.opening!(empty, signal)).text, 'Qual é meu nome?'); assert.equal(body, undefined);
+  const first = (await voice.opening!(empty, signal)).text;
+  assert.match(first, /qual é meu nome\?$/i); assert.match(first, /direto ao que te trouxe/); assert.equal(body, undefined);
   const known = { ...empty, summary: 'Canary pessoal: pretend-code-override', recent: [{ role: 'user' as const, content: 'Meu nome é Henrique.' }] };
   assert.equal((await voice.opening!(known, signal)).text, 'Podemos continuar nossa conversa.');
   assert.equal(body!.instructions.includes('Canary pessoal'), false);
@@ -514,4 +515,13 @@ test('marcas de gesto viram sinais de animação e não chegam à voz nem à tel
   assert.equal(speaking.text, spokenText);
   assert.deepEqual(output.gestures.map((cue: { gesture: string }) => cue.gesture), ['tilt', 'nod']);
   assert.equal(spokenText.slice(Math.round(output.gestures[1].at * spokenText.length)), 'mas faz sentido.');
+});
+
+test('instruções orientam o papel e a descoberta guiada sem dados pessoais', async () => {
+  const { characterInstructions, openingInstructions } = await import('./character.ts');
+  assert.match(characterInstructions, /PAPEL\. O fato da categoria assistant_role/);
+  assert.match(characterInstructions, /Cobrar: retome compromissos/);
+  assert.match(characterInstructions, /DESCOBERTA GUIADA\. .*uma pergunta por fala/);
+  assert.match(characterInstructions, /Nunca abra saúde, fé, dinheiro pessoal, família ou experiências difíceis/);
+  assert.match(openingInstructions(), /papel conhecido \(assistant_role\)/);
 });

@@ -1,7 +1,7 @@
 import type { Message } from './voice.ts';
 import { emitDiagnostic, type DiagnosticReason, type DiagnosticSink, type DiagnosticStage, type DiagnosticField, type DiagnosticDetail } from './memory-diagnostics.ts';
 import type { VectorMemory, VectorSnapshot } from '../../../shared/vector-memory.ts';
-import { categoryForProfile, categoryKey, cosine, initialCategories, initialColor, semanticColor, type Category } from './categories.ts';
+import { categoryForProfile, categoryKey, cosine, discoveryOrder, initialCategories, initialColor, semanticColor, type Category } from './categories.ts';
 
 // Campos desconhecidos permanecem vazios: uma lacuna nunca vira um fato inventado.
 export const profileSlots = {
@@ -173,7 +173,8 @@ function parseContext(data: unknown): MemoryContext {
     catalog: Array.isArray(data.catalog) ? data.catalog.filter(object).filter((row) => typeof row.slot === 'string' &&
       typeof row.value === 'string' && typeof row.status === 'string' && (row.category === null || typeof row.category === 'string')) as MemoryContext['catalog'] : [],
     // Lacunas são assuntos sem relatos; ter um fato não preenche toda a categoria.
-    gaps: initialCategories.map(([key]) => key).filter((key) => ![...profile, ...relevant].some((row) => row.category === key) &&
+    // Topics still unknown, in discovery order; sensitive or observed-only categories are not gaps to ask about.
+    gaps: discoveryOrder.filter((key) => ![...profile, ...relevant].some((row) => row.category === key) &&
       !(Array.isArray(data.catalog) && data.catalog.filter(object).some((row) => row.category === key))) };
 }
 
