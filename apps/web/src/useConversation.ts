@@ -164,7 +164,7 @@ export function useConversation() {
         } catch { if (current === generation.current) { setSubmitting(false); setError('Não foi possível enviar a gravação. Confira a conexão e tente novamente.'); } }
       }, (message) => { if (current === generation.current) { recorderRef.current = null; setRecording(false); setSubmitting(false); setError(message); } },
       // Hands-free: the turn ends by itself after a pause; if nothing was said, nothing is sent.
-      { handsFree: true, onSilent: () => { if (current === generation.current) { recorderRef.current = null; setRecording(false); setError('Não ouvi nada. Toque nela quando quiser falar.'); } } });
+      { handsFree: true, onSilent: () => { if (current === generation.current) { recorderRef.current = null; setRecording(false); setError('Não ouvi nada. Toque quando quiser falar.'); } } });
       if (current !== generation.current) { recorder.cancel(); return; }
       recorderRef.current = recorder; setRecording(true);
     } catch (error) {
@@ -194,5 +194,12 @@ export function useConversation() {
     if (!status) throw new Error('Não foi possível refazer a voz agora. Tente novamente.');
     cloneRef.current = status; setVoiceClone(status);
   }
-  return { voiceClone, redoVoice, state, connection, mode, model, text, transcript, error, send, waking, recording, starting, submitting, needsPlayback, usage, recall, playbackRef, unlockAudio, startRecording, finishRecording, playAnswer, micLevel, interrupt };
+  // "Voz original" or "Minha voz"; choosing the user's own voice is what starts collecting their speech.
+  async function chooseVoice(own: boolean) {
+    const response = await fetch('/api/voice/choice', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ownVoice: own }) });
+    const status = response.ok ? parseCloneStatus(await response.json()) : null;
+    if (!status) throw new Error('Não foi possível trocar a voz agora. Tente novamente.');
+    cloneRef.current = status; setVoiceClone(status);
+  }
+  return { voiceClone, redoVoice, chooseVoice, state, connection, mode, model, text, transcript, error, send, waking, recording, starting, submitting, needsPlayback, usage, recall, playbackRef, unlockAudio, startRecording, finishRecording, playAnswer, micLevel, interrupt };
 }

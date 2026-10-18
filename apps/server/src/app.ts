@@ -10,9 +10,11 @@ import { emitDiagnostic, type DiagnosticSink, type DiagnosticStage, type MemoryD
 import { createLanguageWorker } from './language-worker.ts';
 import { originAllowed, registerWeb } from './access.ts';
 import type { VoiceCloner } from './voice-clone.ts';
+import { detectSpeechLanguage, type SpeechLanguage } from './speech-language.ts';
 
 // webRoot: serve the built web app from there (production).
-export async function createApp(options: { voice?: VoiceProvider; memory?: MemoryService; onUsage?: (record: Record<string, string | number>) => void; onMemoryDiagnostic?: (record: MemoryDiagnosticRecord) => void; webRoot?: string; cloner?: VoiceCloner } = {}) {
+export async function createApp(options: { voice?: VoiceProvider; memory?: MemoryService; onUsage?: (record: Record<string, string | number>) => void; onMemoryDiagnostic?: (record: MemoryDiagnosticRecord) => void; webRoot?: string; cloner?: VoiceCloner;
+  monthUsage?: () => Promise<{ conversationSeconds: number; replies: number }> } = {}) {
   const app = Fastify({ logger: false, trustProxy: true });
   await app.register(websocket, { options: { maxPayload: maxRecordingBytes } });
   if (options.webRoot) registerWeb(app, options.webRoot);
@@ -64,6 +66,20 @@ export async function createApp(options: { voice?: VoiceProvider; memory?: Memor
     try { return await options.cloner.addTake(request.body, AbortSignal.timeout(90_000)); }
     catch { return reply.code(503).send({ error: 'Não foi possível guardar a amostra de voz agora.' }); }
   });
+  app.post('/api/voice/choice', async (request, reply) => {
+    if (!originAllowed(request)) return reply.code(403).send({ error: 'Origem não autorizada.' });
+    if (!options.cloner) return reply.code(404).send({ error: 'Sua voz ainda não está disponível.' });
+    const body = request.body as { ownVoice?: unknown } | undefined;
+    if (typeof body?.ownVoice !== 'boolean') return reply.code(400).send({ error: 'Escolha inválida.' });
+    try { return await options.cloner.choose(body.ownVoice, AbortSignal.timeout(30_000)); }
+    catch { return reply.code(503).send({ error: 'Não foi possível trocar a voz agora.' }); }
+  });
+  // This month's use, for the subscription card.
+  app.get('/api/usage', async (request, reply) => {
+    if (!originAllowed(request)) return reply.code(403).send({ error: 'Origem não autorizada.' });
+    try { return { enabled: true, ...await (options.monthUsage?.() ?? Promise.resolve({ conversationSeconds: 0, replies: 0 })) }; }
+    catch { return { enabled: false }; }
+  });
   // "Refazer minha voz": deletes the clone and every sample; collecting starts over.
   app.post('/api/voice/reset', async (request, reply) => {
     if (!originAllowed(request)) return reply.code(403).send({ error: 'Origem não autorizada.' });
@@ -97,6 +113,8 @@ export async function createApp(options: { voice?: VoiceProvider; memory?: Memor
     const history: Message[] = [];
     let introduced = false;
     let openingText = '';
+    // The language of the conversation: the last one the user spoke (Kelly opens in Portuguese).
+    let language: SpeechLanguage = 'pt';
     const usage: Usage = { turns: 0, sttSeconds: 0, ttsCharacters: 0, inputTokens: 0, outputTokens: 0, cachedTokens: 0 };
 
     function send(event: ServerEvent) {
@@ -141,7 +159,7 @@ export async function createApp(options: { voice?: VoiceProvider; memory?: Memor
         // Gesture marks become animation cues and never reach the voice, the screen or the history.
         const spoken = extractGestures(answer.text);
         started = Date.now();
-        const speech = voice.speakTimed ? await voice.speakTimed(spoken.text, active.signal) : { audio: await voice.speak(spoken.text, active.signal), phonemes: [] };
+        const speech = voice.speakTimed ? await voice.speakTimed(spoken.text, active.signal, language) : { audio: await voice.speak(spoken.text, active.signal, language), phonemes: [] };
         if (!valid()) return;
         usage.ttsCharacters += Array.from(spoken.text).length;
         recordUsage('tts', { characters: Array.from(spoken.text).length, phonemes: speech.phonemes.length }, started);
@@ -196,6 +214,8 @@ export async function createApp(options: { voice?: VoiceProvider; memory?: Memor
           throw new Error('Não identificamos uma fala. Grave uma pergunta curta e tente novamente.');
         }
         send({ type: 'transcript', text: transcript.text });
+        // Kelly answers in the language the user just spoke; an ambiguous utterance keeps the conversation's language.
+        language = detectSpeechLanguage(transcript.text, language);
         const message: Message = { role: 'user', content: transcript.text };
         phase = 'context';
         const context = options.memory ? await options.memory.load(transcript.text, active.signal) : undefined;
@@ -205,7 +225,7 @@ export async function createApp(options: { voice?: VoiceProvider; memory?: Memor
         started = Date.now();
         phase = 'proposal';
         const answer = await voice.reply([...(context?.recent ?? history),
-          ...(openingText ? [{ role: 'assistant' as const, content: openingText }] : []), message], active.signal, context, diagnostic);
+          ...(openingText ? [{ role: 'assistant' as const, content: openingText }] : []), message], active.signal, context, diagnostic, language);
         usage.inputTokens += answer.inputTokens;
         usage.outputTokens += answer.outputTokens;
         usage.cachedTokens += answer.cachedTokens;
@@ -214,7 +234,7 @@ export async function createApp(options: { voice?: VoiceProvider; memory?: Memor
         const spoken = extractGestures(answer.text);
         started = Date.now();
         phase = 'speech';
-        const speech = voice.speakTimed ? await voice.speakTimed(spoken.text, active.signal) : { audio: await voice.speak(spoken.text, active.signal), phonemes: [] };
+        const speech = voice.speakTimed ? await voice.speakTimed(spoken.text, active.signal, language) : { audio: await voice.speak(spoken.text, active.signal, language), phonemes: [] };
         if (!valid()) return;
         usage.ttsCharacters += Array.from(spoken.text).length;
         usage.turns++;

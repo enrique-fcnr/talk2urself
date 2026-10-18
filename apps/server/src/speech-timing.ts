@@ -70,7 +70,9 @@ export async function readTimedSpeech(response: Response, signal: AbortSignal): 
       const timing = value.phoneme_timestamps;
       if (!record(timing) || !Array.isArray(timing.phonemes) || !Array.isArray(timing.start) || !Array.isArray(timing.end) ||
         timing.phonemes.length !== timing.start.length || timing.phonemes.length !== timing.end.length) { invalidTimings = true; return; }
-      const batch = parsePhonemeCues(timing.phonemes.map((phoneme, i) => ({ phoneme, start: (timing.start as unknown[])[i], end: (timing.end as unknown[])[i] })));
+      // Cartesia sometimes sends a sound with no duration (start === end); skip just that one instead of losing them all.
+      const batch = parsePhonemeCues(timing.phonemes.map((phoneme, i) => ({ phoneme, start: (timing.start as unknown[])[i], end: (timing.end as unknown[])[i] }))
+        .filter((cue) => !(typeof cue.start === 'number' && cue.start === cue.end)));
       if (!batch || cues.length + batch.length > 5000) { invalidTimings = true; return; }
       cues.push(...batch);
     } else if (value.type === 'timestamps') {

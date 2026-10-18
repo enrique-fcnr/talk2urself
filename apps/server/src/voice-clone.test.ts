@@ -69,6 +69,9 @@ test('clones at the thresholds, re-clones twice, then freezes keeping only the f
   const cloner = createVoiceCloner({ cartesiaKey: 'k', storageUrl: 'https://x.supabase.co', secret: 's', userId: 'user' }, services.fetcher, () => {});
   const take = writeWav(speech(20));
   assert.equal(cloner.voiceId(), undefined);
+  // Nothing is collected until the user picks "Minha voz".
+  assert.equal((await cloner.addTake(take, AbortSignal.timeout(5000))).accepted, false);
+  await cloner.choose(true, AbortSignal.timeout(5000));
   let clonedAt: number[] = [];
   for (let i = 0; i < 70 && !cloner.status().frozen; i++) {
     const result = await cloner.addTake(take, AbortSignal.timeout(5000));
@@ -77,6 +80,9 @@ test('clones at the thresholds, re-clones twice, then freezes keeping only the f
   }
   assert.deepEqual(clonedAt, cloneThresholds.map((threshold) => Math.ceil(threshold / 20) * 20));
   assert.equal(cloner.voiceId(), 'voice-3');
+  await cloner.choose(false, AbortSignal.timeout(5000));
+  assert.equal(cloner.voiceId(), undefined, 'own voice off: Kelly speaks with hers');
+  await cloner.choose(true, AbortSignal.timeout(5000));
   assert.deepEqual(services.deletedVoices, ['voice-1', 'voice-2']);
   assert.equal(cloner.status().frozen, true);
   const stored = [...services.files.keys()].sort();
@@ -87,7 +93,7 @@ test('clones at the thresholds, re-clones twice, then freezes keeping only the f
   assert.ok(services.clones.every((size) => Number(size) <= 44 + (60 + 3) * rate * 2));
 
   const status = await cloner.reset(AbortSignal.timeout(5000));
-  assert.equal(status.cloned, false);
+  assert.equal(status.cloned, false); assert.equal(status.ownVoice, true);
   assert.equal(status.collecting, true);
   assert.deepEqual([...services.files.keys()], ['user/state.json']);
   assert.deepEqual(services.deletedVoices, ['voice-1', 'voice-2', 'voice-3']);
@@ -96,8 +102,9 @@ test('clones at the thresholds, re-clones twice, then freezes keeping only the f
 test('rejected takes are not stored or counted', async () => {
   const services = fakeServices();
   const cloner = createVoiceCloner({ cartesiaKey: 'k', storageUrl: 'https://x.supabase.co', secret: 's', userId: 'user' }, services.fetcher, () => {});
+  await cloner.choose(true, AbortSignal.timeout(5000));
   const result = await cloner.addTake(writeWav(speech(6, 0.02)), AbortSignal.timeout(5000));
   assert.equal(result.accepted, false);
   assert.equal(result.status.collectedSeconds, 0);
-  assert.equal([...services.files.keys()].length, 0);
+  assert.deepEqual([...services.files.keys()], ['user/state.json']);
 });

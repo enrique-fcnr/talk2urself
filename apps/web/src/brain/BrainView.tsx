@@ -343,7 +343,7 @@ export default function BrainView({ origin, recall, theme = 'dark', onClose, onL
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18" /></svg>
       </button>
     </header>
-    {status === 'ready' && !count ? <p className="brain-message">Converse com a Kelly para preencher o cérebro. Cada coisa que ela aprender sobre você vira um ponto de luz aqui.</p> : null}
+    {status === 'ready' && !count ? <p className="brain-message">Converse com seu clone para preencher o cérebro. Cada coisa que ele aprender sobre você vira um ponto de luz aqui.</p> : null}
     {status === 'disabled' ? <p className="brain-message">A memória não está configurada no servidor.</p> : null}
     {status === 'error' ? <p className="brain-message">Não foi possível acender as memórias. <button onClick={() => { setStatus('loading'); setRefresh((n) => n + 1); }}>Tentar de novo</button></p> : null}
     {focus ? <div ref={card} className={`brain-card${focus.pinned ? ' pinned' : ''}`} role="status">
@@ -357,7 +357,6 @@ export default function BrainView({ origin, recall, theme = 'dark', onClose, onL
           <i style={{ background: item.color }} />{item.label} <span>{item.count}</span></button></li>)}</ul> : null}
       <p className="brain-hint">{count ? mouse ? 'Arraste para girar · clique num ponto para ler · clique fora para voltar' : 'Gire com o dedo · toque num ponto para ler · toque fora para voltar' : mouse ? 'Clique fora para voltar' : 'Toque fora para voltar'}
         {' · '}<a href="/memories" target="_blank" rel="noreferrer">Mapa detalhado&nbsp;↗</a></p>
-      <p className="brain-credit">Modelo do cérebro: <a href="https://sketchfab.com/3d-models/human-brain-cerebrum-brainstem-0aa0e33c5c854d1bab7bac9e1c7acaec" target="_blank" rel="noreferrer">pranktoy</a>, CC BY 4.0</p>
     </footer>
     <ul className="sr-only" aria-label="Lista de memórias">{layout?.points.map((point) =>
       <li key={point.id}><button onClick={() => setFocus({ point, pinned: true })}>{label(point)}: {point.memory.value}{recalled(point) ? ' (usada na última resposta)' : ''}</button></li>)}</ul>

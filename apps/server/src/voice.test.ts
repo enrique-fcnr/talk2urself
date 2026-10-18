@@ -438,14 +438,19 @@ test('contratos HTTP usam áudio multipart, texto de saída correto e chave só 
   assert.equal(answer.text, 'O que motiva essa escolha?'); assert.equal(answer.cachedTokens, 50);
   assert.deepEqual(await voice.speak(answer.text, active.signal), wav());
   const multipart = calls[0].options.body as FormData;
-  assert.equal(multipart.get('language'), null); assert.deepEqual(multipart.getAll('languages[]'), ['pt']);
+  assert.equal(multipart.get('language'), null); assert.deepEqual(multipart.getAll('languages[]'), ['pt', 'en']);
   assert.equal(multipart.get('model'), 'gpt-transcribe'); assert.ok(multipart.get('file') instanceof Blob);
   assert.deepEqual(multipart.getAll('keywords[]'), ['véi', 'velho', 'pô', 'tá ligado']);
   assert.match(String(multipart.get('prompt')), /sem formalizar/);
   assert.equal((calls[0].options.headers as any).Authorization, 'Bearer test-openai-key');
   assert.equal(calls.filter(call => call.url.includes('cartesia')).length, 1, 'Cartesia só recebe a síntese de voz.');
   const responseBody = JSON.parse(calls[1].options.body as string); assert.equal(responseBody.store, false); assert.equal(responseBody.model, 'gpt-6-luna');
-  const voiceBody = JSON.parse(calls[2].options.body as string); assert.equal(voiceBody.voice, 'test-voice'); assert.equal(voiceBody.output_format.container, 'wav');
+  const voiceBody = JSON.parse(calls[2].options.body as string); assert.equal(voiceBody.voice, 'test-voice'); assert.equal(voiceBody.output_format.container, 'wav'); assert.equal(voiceBody.language, 'pt-BR');
+  assert.match(responseBody.input[0].content, /replyLanguage: português/);
+  await voice.reply([{ role: 'user', content: 'What do you think?' }], active.signal, undefined, undefined, 'en');
+  assert.match(JSON.parse(calls[3].options.body as string).input[0].content, /replyLanguage: inglês/);
+  await voice.speak('Sure.', active.signal, 'en');
+  assert.equal(JSON.parse(calls[4].options.body as string).language, 'en');
 });
 
 test('transcrição preserva formas coloquiais e envia os formatos do gravador à OpenAI', async () => {

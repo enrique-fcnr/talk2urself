@@ -1,6 +1,7 @@
 import type { MemoryContext, MemoryService } from './memory.ts';
 import type { VoiceProvider } from './voice.ts';
 import { languageAnalysisPlan } from './language.ts';
+import { detectSpeechLanguage, forLanguage, tagSlot } from './speech-language.ts';
 import { emitDiagnostic, type DiagnosticSink } from './memory-diagnostics.ts';
 
 type LanguageUsage = { inputTokens: number; outputTokens: number; cachedTokens: number; elapsedMs: number };
@@ -34,6 +35,17 @@ export function createLanguageWorker(voice: VoiceProvider, memory: MemoryService
             ...(context.language.atLimit ? {reason:'candidate_limit' as const} : {})});
           messages = context.language.sources.map(source => ({ role:'user' as const,content:source.text }));
         }
+        // Habits are learned per language: only utterances in the current one count as proof, and only that
+        // language's expressions are shown as already known.
+        const spoken = detectSpeechLanguage(messages.at(-1)?.content ?? '');
+        const same = (text: string) => detectSpeechLanguage(text, spoken) === spoken;
+        messages = messages.filter((message) => same(message.content));
+        if (context.language) context.language = { ...context.language, sources: context.language.sources.filter((source) => same(source.text)),
+          candidates: context.language.candidates.map((candidate) => ({ ...candidate, sources: candidate.sources.filter((source) => same(source.text)) }))
+            .filter((candidate) => candidate.sources.length) };
+        context.profile = forLanguage(context.profile, spoken); context.relevant = forLanguage(context.relevant, spoken);
+        if (context.catalog) context.catalog = forLanguage(context.catalog, spoken);
+        context.speechLanguage = spoken;
         const plan = languageAnalysisPlan(messages, context);
         if (plan !== 'ready') { emitDiagnostic(report, { stage: 'language_analysis', outcome: 'skipped', reason: plan }); continue; }
         emitDiagnostic(report, { stage: 'language_analysis', outcome: 'started' });
@@ -43,7 +55,8 @@ export function createLanguageWorker(voice: VoiceProvider, memory: MemoryService
         controller.signal.throwIfAborted();
         emitDiagnostic(report, { stage: 'language_analysis', outcome: 'completed', count: result.updates.length });
         if (!result.updates.length && !result.rejectedCandidates?.length) continue;
-        const saved = await memory.saveLanguage!(job.turnId, context, result.updates, controller.signal, report,result.rejectedCandidates);
+        const updates = result.updates.map((update) => tagSlot(update, spoken));
+        const saved = await memory.saveLanguage!(job.turnId, context, updates, controller.signal, report,result.rejectedCandidates);
         if (saved.applied) notify();
       } catch {
         emitDiagnostic(report, { stage: 'language_analysis', outcome: controller.signal.aborted ? 'cancelled' : 'failed', reason: 'service_error' });

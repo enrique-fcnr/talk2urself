@@ -111,3 +111,11 @@ test('voz pausada devolve silêncio com a duração da fala e movimentos de boca
     assert.ok(timed.audio.length > 44); assert.deepEqual(fetches, []);
   } finally { globalThis.fetch = original; }
 });
+test('inglês pede fonemas à Cartesia e um som sem duração não descarta os demais',async()=>{
+  const voice=createVoiceProvider({openaiKey:'test',cartesiaKey:'test',voiceId:'test',model:'test'},async(_url,init)=>{
+    const body=JSON.parse(String(init?.body));assert.equal(body.add_phoneme_timestamps,true);assert.equal(body.language,'en');
+    return sse([{type:'phoneme_timestamps',phoneme_timestamps:{phonemes:['ʃ','ɪ','ʊɹ'],start:[.1,.3,.3],end:[.3,.3,.5]}},chunk,done]);
+  });
+  const result=await voice.speakTimed!('Sure.',AbortSignal.timeout(5000),'en');
+  assert.deepEqual(result.phonemes,[{phoneme:'ʃ',start:.1,end:.3},{phoneme:'ʊɹ',start:.3,end:.5}]);
+});

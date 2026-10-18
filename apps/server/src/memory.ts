@@ -2,6 +2,7 @@ import type { Message } from './voice.ts';
 import { emitDiagnostic, type DiagnosticReason, type DiagnosticSink, type DiagnosticStage, type DiagnosticField, type DiagnosticDetail } from './memory-diagnostics.ts';
 import type { VectorMemory, VectorSnapshot } from '../../../shared/vector-memory.ts';
 import { categoryForProfile, categoryKey, cosine, discoveryOrder, initialCategories, initialColor, semanticColor, type Category } from './categories.ts';
+import { forLanguage, type SpeechLanguage } from './speech-language.ts';
 
 // Campos desconhecidos permanecem vazios: uma lacuna nunca vira um fato inventado.
 export const profileSlots = {
@@ -30,7 +31,7 @@ export type MemoryUpdate = { slot: string; category: string; categoryDescription
   languageEvidence?: LanguageSource[]; candidateIds?: string[] };
 export type Learning = { summary: string; updates: MemoryUpdate[] };
 export type StoredMemory = { slot: string; category?: string; value: string; evidence: string; basis: string; status: 'known' | 'declined'; recordedAt?: string };
-export type MemoryContext = { summary: string; profile: StoredMemory[]; relevant: StoredMemory[]; recent: Message[]; version: number; gaps: string[];
+export type MemoryContext = { speechLanguage?: SpeechLanguage; summary: string; profile: StoredMemory[]; relevant: StoredMemory[]; recent: Message[]; version: number; gaps: string[];
   categories?: Category[]; catalog?: { slot: string; value: string; category: string | null; status: string }[]; language?: LanguageContext };
 export interface MemoryService {
   acquire(): (() => void) | null;
@@ -133,9 +134,11 @@ export function validateLearning(value: unknown, user: string, history: Message[
   return { summary: value.summary.trim(), updates };
 }
 
-export function memoryContextText(context: MemoryContext): string {
-  return JSON.stringify({ referenceDate: new Date().toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' }), summary: context.summary, profile: context.profile, relevant: context.relevant,
-    categories: context.categories?.map(({ key, label, description }) => ({ key, label, description })), catalog: context.catalog,
+// With a reply language, expressions learned in the other language are left out (see speech-language.ts).
+export function memoryContextText(context: MemoryContext, language?: SpeechLanguage): string {
+  const pick = <T extends { slot: string; category?: string | null }>(items: T[]) => language ? forLanguage(items, language) : items;
+  return JSON.stringify({ referenceDate: new Date().toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' }), summary: context.summary, profile: pick(context.profile), relevant: pick(context.relevant),
+    categories: context.categories?.map(({ key, label, description }) => ({ key, label, description })), catalog: context.catalog && pick(context.catalog),
     gaps: context.gaps.map((slot) => ({ slot, topic: initialCategories.find(([key]) => key === slot)?.[2] ?? profileSlots[slot as keyof typeof profileSlots] })) });
 }
 

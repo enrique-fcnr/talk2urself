@@ -43,6 +43,9 @@ export function phonemePose(sound: string): MouthPose {
   if (['o', 'ɔ', 'oh', 'ao', 'ow'].includes(p)) return { OH: .75, LipsFunnel: .35 };
   if (['u', 'ʊ', 'w', 'uw', 'uh', 'ou'].includes(p)) return { OU: .75, LipsPucker: .55 };
   if (['a', 'ɑ', 'ɐ', 'æ', 'ə', 'ʌ', 'aa', 'ah', 'ae', 'aw', 'ay'].includes(p)) return { AA: .7 };
+  // Combined English sounds (ʊɹ, aɪ, oʊ, ɝ…): shape the mouth for the first one.
+  if ([...p].length > 1) return phonemePose([...p][0]);
+  if (['ɝ', 'ɚ'].includes(p)) return { rr: .65 };
   return { JawOpen: .18 };
 }
 // Use the player's clock, so pauses, retries and tab throttling cannot drift.

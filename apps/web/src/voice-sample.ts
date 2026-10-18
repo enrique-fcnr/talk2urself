@@ -1,12 +1,12 @@
 // Voice cloning (server flag VOICE_CLONING=1): a recorded turn becomes a 16 kHz mono 16-bit WAV take for the server,
 // which keeps only clean takes and builds the user's voice from them.
-export type VoiceCloneStatus = { enabled: boolean; collecting: boolean; cloned: boolean; frozen: boolean; clones: number; collectedSeconds: number; nextAt: number | null };
+export type VoiceCloneStatus = { enabled: boolean; ownVoice: boolean; collecting: boolean; cloned: boolean; frozen: boolean; clones: number; collectedSeconds: number; nextAt: number | null };
 
 export function parseCloneStatus(value: unknown): VoiceCloneStatus | null {
   if (typeof value !== 'object' || value === null) return null;
   const status = value as Record<string, unknown>;
   if (status.enabled !== true || typeof status.collecting !== 'boolean' || typeof status.collectedSeconds !== 'number') return null;
-  return { enabled: true, collecting: status.collecting, cloned: status.cloned === true, frozen: status.frozen === true,
+  return { enabled: true, ownVoice: status.ownVoice === true, collecting: status.collecting, cloned: status.cloned === true, frozen: status.frozen === true,
     clones: typeof status.clones === 'number' ? status.clones : 0, collectedSeconds: status.collectedSeconds,
     nextAt: typeof status.nextAt === 'number' ? status.nextAt : null };
 }
@@ -40,7 +40,7 @@ export async function sendVoiceSample(blob: Blob): Promise<VoiceCloneStatus | nu
 const minutes = (seconds: number) => `${Math.floor(seconds / 60)}:${String(Math.floor(seconds % 60)).padStart(2, '0')}`;
 // One line for the settings panel: where the voice is in its collect → clone → freeze cycle.
 export function voiceStatus(status: VoiceCloneStatus): string {
-  if (status.frozen) return 'Sua voz está pronta e fixa. Refazer apaga a voz e a amostra guardada e recomeça do zero.';
-  if (!status.cloned) return `Aprendendo sua voz: ${minutes(status.collectedSeconds)} de ${minutes(status.nextAt ?? 150)} de fala limpa.`;
-  return `Ela já fala com sua voz e ainda está refinando (${minutes(status.collectedSeconds)} de ${minutes(status.nextAt ?? 1200)}).`;
+  if (status.frozen) return 'Seu clone fala com a sua voz.';
+  if (!status.cloned) return `Aprendendo sua voz: ${minutes(status.collectedSeconds)} de ${minutes(status.nextAt ?? 150)}. Até lá, seu clone usa a voz original.`;
+  return `Seu clone já fala com a sua voz e continua refinando (${minutes(status.collectedSeconds)} de ${minutes(status.nextAt ?? 1200)}).`;
 }

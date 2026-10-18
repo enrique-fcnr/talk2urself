@@ -1,7 +1,7 @@
 import { createApp } from './app.ts';
 import { createVoiceProvider, readVoiceConfig } from './voice.ts';
 import { createVoiceCloner, readVoiceCloneConfig } from './voice-clone.ts';
-import { appendFileSync, existsSync, mkdirSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { createMemoryService, readMemoryConfig } from './memory.ts';
 import { serializeDiagnostic, type MemoryDiagnosticRecord } from './memory-diagnostics.ts';
@@ -18,6 +18,21 @@ const logUsage = (record: Record<string, string | number>) => {
     appendFileSync('.local/usage.jsonl', JSON.stringify({ at: new Date().toISOString(), ...record }) + '\n');
   } catch { console.warn('Não foi possível salvar o contador de uso local.'); }
 };
+// This month's use from the local usage log: seconds of the user's speech and replies spoken.
+async function monthUsage() {
+  const month = new Date().toISOString().slice(0, 7);
+  let conversationSeconds = 0, replies = 0;
+  if (!existsSync('.local/usage.jsonl')) return { conversationSeconds, replies };
+  for (const line of readFileSync('.local/usage.jsonl', 'utf8').split(/\r?\n/)) {
+    if (!line.startsWith(`{"at":"${month}`)) continue;
+    try {
+      const record = JSON.parse(line) as { service?: string; seconds?: number };
+      if (record.service === 'stt' && typeof record.seconds === 'number') conversationSeconds += record.seconds;
+      if (record.service === 'tts') replies++;
+    } catch { /* A damaged line is skipped. */ }
+  }
+  return { conversationSeconds: Math.round(conversationSeconds), replies };
+}
 // The built web app, when present (production): this one server then serves both the page and the API.
 const webRoot = fileURLToPath(new URL('../../web/dist', import.meta.url));
 const app = await createApp({
@@ -25,6 +40,7 @@ const app = await createApp({
   voice: config ? createVoiceProvider(config) : undefined,
   memory: memoryConfig ? createMemoryService(memoryConfig, fetch, logUsage) : undefined,
   cloner,
+  monthUsage,
   onUsage: logUsage,
   onMemoryDiagnostic: (record: MemoryDiagnosticRecord) => {
     try {

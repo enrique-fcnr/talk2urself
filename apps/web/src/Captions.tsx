@@ -28,7 +28,7 @@ type Shown = { key: string; text: string; who: 'kelly' | 'you' | 'hint'; arrow?:
 // arrives. Kelly's words follow her audio; after the user speaks, what she understood shows in a quieter tone.
 // Nothing stays on screen once a line has passed. place() gives the line's vertical centre, in pixels from the top
 // of the conversation area.
-// hint: a short guidance line ("Toque nela para falar") shown in the same place while nobody is talking.
+// hint: a short guidance line ("Toque para falar") shown in the same place while nobody is talking.
 // hintArrow: the hint points down at Kelly (a small bobbing chevron after it).
 export default function Captions({ text, transcript, speaking, thinking, playbackRef, place, hint, hintArrow = false }: {
   text: string; transcript: string; speaking: boolean; thinking: boolean; playbackRef: RefObject<AvatarPlayback | null>; place: () => number | null; hint?: string; hintArrow?: boolean;

@@ -19,9 +19,10 @@ const poolSeconds = 90;
 const sampleRate = 16_000;
 
 export type Take = { path: string; seconds: number; score: number };
-export type CloneState = { voiceId?: string; collectedSeconds: number; clones: number; frozen: boolean; takes: Take[]; updatedAt?: string };
+// ownVoice: the user chose "Minha voz". Only then is their speech collected and the clone used.
+export type CloneState = { ownVoice?: boolean; voiceId?: string; collectedSeconds: number; clones: number; frozen: boolean; takes: Take[]; updatedAt?: string };
 export const emptyState = (): CloneState => ({ collectedSeconds: 0, clones: 0, frozen: false, takes: [] });
-export type CloneStatus = { enabled: boolean; collecting: boolean; cloned: boolean; frozen: boolean; clones: number; collectedSeconds: number; nextAt: number | null };
+export type CloneStatus = { enabled: boolean; ownVoice: boolean; collecting: boolean; cloned: boolean; frozen: boolean; clones: number; collectedSeconds: number; nextAt: number | null };
 
 // --- WAV (16-bit mono PCM) ---------------------------------------------------------------------------------------------
 export function readWav(buffer: Buffer): { samples: Int16Array; rate: number } | null {
@@ -106,7 +107,7 @@ export function joinTakes(parts: Int16Array[], rate = sampleRate): Int16Array {
 }
 export function cloneStatus(state: CloneState, enabled: boolean): CloneStatus {
   const nextAt = state.frozen ? null : cloneThresholds[state.clones] ?? null;
-  return { enabled, collecting: enabled && !state.frozen, cloned: Boolean(state.voiceId), frozen: state.frozen, clones: state.clones,
+  return { enabled, ownVoice: !!state.ownVoice, collecting: enabled && !!state.ownVoice && !state.frozen, cloned: Boolean(state.voiceId), frozen: state.frozen, clones: state.clones,
     collectedSeconds: Math.round(state.collectedSeconds), nextAt };
 }
 
@@ -117,6 +118,7 @@ export interface VoiceCloner {
   ready(): Promise<void>;
   addTake(wav: Buffer, signal: AbortSignal): Promise<{ accepted: boolean; cloned: boolean; status: CloneStatus }>;
   reset(signal: AbortSignal): Promise<CloneStatus>;
+  choose(ownVoice: boolean, signal: AbortSignal): Promise<CloneStatus>;
 }
 
 const bucket = 'talk-voice';
@@ -194,7 +196,7 @@ export function createVoiceCloner(config: VoiceCloneConfig, fetcher: typeof fetc
   async function addTake(wav: Buffer, signal: AbortSignal) {
     await load();
     return serial(async () => {
-      if (state.frozen) return { accepted: false, cloned: false, status: cloneStatus(state, true) };
+      if (state.frozen || !state.ownVoice) return { accepted: false, cloned: false, status: cloneStatus(state, true) };
       const parsed = readWav(wav);
       if (!parsed) return { accepted: false, cloned: false, status: cloneStatus(state, true) };
       const samples = resample(parsed.samples, parsed.rate), quality = takeQuality(samples, sampleRate);
@@ -233,11 +235,17 @@ export function createVoiceCloner(config: VoiceCloneConfig, fetcher: typeof fetc
     return serial(async () => {
       if (state.voiceId) await deleteVoice(state.voiceId, signal);
       await remove([...state.takes.map((item) => item.path), 'final.wav'], signal);
-      state = emptyState();
+      state = { ...emptyState(), ownVoice: state.ownVoice };
       await saveState(signal);
       return cloneStatus(state, true);
     });
   }
 
-  return { voiceId: () => state.voiceId, status: () => cloneStatus(state, true), ready: () => load().catch(() => undefined), addTake, reset };
+  async function choose(ownVoice: boolean, signal: AbortSignal) {
+    await load();
+    return serial(async () => { state.ownVoice = ownVoice; await saveState(signal); return cloneStatus(state, true); });
+  }
+
+  // The clone speaks only while the user keeps "Minha voz" chosen; otherwise Kelly's own voice.
+  return { voiceId: () => state.ownVoice ? state.voiceId : undefined, status: () => cloneStatus(state, true), ready: () => load().catch(() => undefined), addTake, reset, choose };
 }

@@ -137,11 +137,11 @@ test('voice cloning routes are inert without a cloner and pass WAV takes to it w
   assert.deepEqual((await plain.inject('/api/voice')).json(), { enabled: false });
   assert.equal((await plain.inject({ method: 'POST', url: '/api/voice/sample', headers: { 'content-type': 'audio/wav' }, payload: Buffer.from('RIFF') })).statusCode, 404);
   await plain.close();
-  const status = { enabled: true, collecting: true, cloned: false, frozen: false, clones: 0, collectedSeconds: 0, nextAt: 150 };
+  const status = { enabled: true, ownVoice: true, collecting: true, cloned: false, frozen: false, clones: 0, collectedSeconds: 0, nextAt: 150 };
   const received: number[] = [];
   const app = await createApp({ cloner: { voiceId: () => undefined, status: () => status, ready: async () => {},
     addTake: async (wav) => { received.push(wav.length); return { accepted: true, cloned: false, status }; },
-    reset: async () => status } });
+    reset: async () => status, choose: async () => status } });
   assert.deepEqual((await app.inject('/api/health')).json().voiceClone, status);
   const sample = await app.inject({ method: 'POST', url: '/api/voice/sample', headers: { 'content-type': 'audio/wav' }, payload: Buffer.alloc(1000) });
   assert.equal(sample.statusCode, 200);
