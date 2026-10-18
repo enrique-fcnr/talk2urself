@@ -43,6 +43,8 @@ export interface MemoryService {
   vectors(signal: AbortSignal): Promise<VectorSnapshot>;
   // Saved facts with an embedding (the same set the memory map shows), counted without downloading vectors.
   count?(signal: AbortSignal): Promise<number>;
+  // The user interrupted the reply: keep only what was said before the cut in the saved turn.
+  trimReply?(turnId: string, text: string, signal: AbortSignal): Promise<void>;
 }
 export type MemoryConfig = { url: string; secret: string; userId: string; openaiKey: string };
 
@@ -284,6 +286,13 @@ export function createMemoryService(config: MemoryConfig, fetcher: typeof fetch 
         emitDiagnostic(report, { stage, outcome: signal.aborted ? 'cancelled' : 'failed', reason: 'service_error' });
         throw error;
       }
+    },
+    async trimReply(turnId, text, signal) {
+      const response = await fetcher(`${config.url}/rest/v1/talk_turns?id=eq.${encodeURIComponent(turnId)}&user_id=eq.${config.userId}`, {
+        method: 'PATCH', headers: { apikey: config.secret, 'Content-Type': 'application/json', Prefer: 'return=minimal' },
+        body: JSON.stringify({ assistant_text: text.slice(0, 4000) }), signal: AbortSignal.any([signal, AbortSignal.timeout(10_000)]) });
+      await response.body?.cancel();
+      if (!response.ok) throw new Error('Memória: não foi possível ajustar a fala interrompida.');
     },
     async count(signal) {
       // PostgREST returns the total in Content-Range ("0-0/42") when asked for an exact count.

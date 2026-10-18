@@ -536,3 +536,33 @@ test('o personagem é conciso sem teto fixo de palavras', async () => {
   assert.match(characterInstructions, /CONCISÃO: diga o essencial primeiro/);
   assert.equal(characterInstructions.includes('220 palavras'), false);
 });
+
+test('resposta sai frase por frase, só gera a próxima quando a anterior toca e para na interrupção', async (t) => {
+  const voiced: string[] = [], histories: Message[][] = [];
+  const reply = 'Pô, entendi o que você sente agora. Eu começaria vendo o que te puxa pra fora do emprego, com calma. Depois a gente compara as opções com números. O que pesa mais?';
+  const app = await createApp({ voice: provider({
+    reply: async (messages) => { histories.push(messages); return { text: reply, inputTokens: 1, outputTokens: 1, cachedTokens: 0 }; },
+    speakTimed: async (text) => { voiced.push(text); return { audio: wav(), phonemes: [] }; },
+  }) });
+  const address = await app.listen({ host: '127.0.0.1', port: 0 }); const channel = new Channel(address);
+  t.after(async () => { await channel.close(); await app.close(); });
+  const until = async (match: (event: any) => boolean) => { for (;;) { const event = await channel.next(); if (match(event)) return event; } };
+  await channel.opened; await channel.next(); channel.command('start'); await channel.next(); channel.audio();
+  assert.equal((await until((event) => event.type === 'state' && event.state === 'speaking')).text, reply);
+  const first = await until((event) => event.type === 'audio-output');
+  assert.deepEqual([first.segment, first.last, first.from], [0, false, 0]);
+  await channel.next(); await delay(30);
+  assert.equal(voiced.length, 1, 'Só a primeira frase é gerada antes de tocar.');
+  channel.socket.send(JSON.stringify({ type: 'playing', segment: 0 }));
+  const second = await until((event) => event.type === 'audio-output');
+  assert.equal(second.segment, 1); assert.equal(voiced.length, 2);
+  await channel.next();
+  // The user cuts in a few words into the second segment: nothing else is voiced, and the history keeps only what was heard.
+  channel.socket.send(JSON.stringify({ type: 'interrupt', heard: second.from + 12 }));
+  assert.equal((await until((event) => event.type === 'state')).state, 'listening');
+  channel.socket.send(JSON.stringify({ type: 'playing', segment: 1 })); await delay(30);
+  assert.equal(voiced.length, 2, 'Nada é gerado depois da interrupção.');
+  channel.audio(); await until((event) => event.type === 'state' && event.state === 'speaking');
+  const said = histories[1].find((message) => message.role === 'assistant')!.content;
+  assert.ok(said.endsWith('…') && said.startsWith('Pô, entendi') && !said.includes('números'), said);
+});

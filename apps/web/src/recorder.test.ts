@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createSpeechGate, quietPeak, recordMicrophone } from './recorder.ts';
+import { createBargeDetector, createSpeechGate, quietPeak, recordMicrophone } from './recorder.ts';
 
 test('a gravação informa o pico de volume para detectar microfone mudo', async (t) => {
   const descriptors = ['navigator', 'MediaRecorder', 'AudioContext'].map((name) => [name, Object.getOwnPropertyDescriptor(globalThis, name)] as const);
@@ -86,4 +86,25 @@ test('conversa sem toque: envia após uma pausa e desiste se ninguém falar', ()
 
   const noisy = createSpeechGate();
   assert.equal(feed(noisy, .03, 3), 'waiting', 'a steady noisy room never counts as speech');
+});
+
+test('barge-in: o eco baixo da fala do clone não interrompe; a voz do usuário por um instante interrompe', () => {
+  const step = .05, run = (detector: ReturnType<typeof createBargeDetector>, rms: number, seconds: number) => {
+    let fired = false; for (let t = 0; t < seconds; t += step) fired = detector.update(rms, step) || fired; return fired;
+  };
+  const echo = createBargeDetector();
+  assert.equal(run(echo, .012, .6), false, 'calibra com o eco que sobra');
+  assert.equal(run(echo, .015, 3), false, 'eco parecido com o da calibração não conta');
+  const cough = createBargeDetector(); run(cough, .01, .6);
+  assert.equal(run(cough, .2, .15) || run(cough, .01, .5), false, 'um ruído curto decai antes de somar');
+  const voice = createBargeDetector(); run(voice, .01, .6);
+  assert.equal(run(voice, .12, .4), true, 'fala clara por ~0,3 s interrompe');
+});
+
+test('gravação que assume a interrupção já começa falando e termina na pausa', () => {
+  const gate = createSpeechGate({ speaking: true, floor: .01 });
+  assert.equal(gate.state, 'speaking');
+  let state = gate.update(.1, .5);
+  for (let t = 0; t < 1.4; t += .1) state = gate.update(.005, .1);
+  assert.equal(state, 'done');
 });

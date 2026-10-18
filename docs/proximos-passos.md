@@ -1,48 +1,37 @@
-# Talk2urself — próximos passos
+# Talk2urself — escopo da demo
 
-Lista do que já foi decidido acrescentar, em ordem aproximada de prioridade. Cada item vira uma tarefa quando entrar em desenvolvimento.
+Meta: um clone individual muito bem acabado, estável, rodando em cloud e forte o suficiente para virar um case técnico de LinkedIn. Lista definida em 18/10/2026.
 
-## 1. Página de configurações (engrenagem)
+## Finalizar agora, antes dos vídeos
 
-A engrenagem abre uma página cheia (no celular, uma tela que desliza por cima), em cartões no estilo de vidro do app.
+- [ ] Implementar a AWS / cloud.
+- [ ] Validar o fluxo completo em cloud: áudio → transcrição → LLM → memória → voz → avatar.
+- [ ] Testar e estabilizar a memória/RAG entre sessões.
+- [ ] Validar casos em que a memória deve e não deve ser recuperada.
+- [ ] Testar autonomia do clone: recomendar, discordar, explicar critérios e não inventar fatos.
+- [ ] Estabilizar transcrição, TTS e latência.
+- [ ] Clonagem de voz na demo: plano Pro da Cartesia (assinatura decidida em 18/10/2026), habilitar (`CARTESIA_PAUSED=0`, `VOICE_CLONING=1`, ver `clonagem-de-voz.md`) e validar de verdade.
+- [ ] Validar português e inglês.
+- [ ] Validar especialmente o lip-sync em inglês com voz.
+- [ ] Fechar o avatar 3D: boca, olhos, piscadas, respiração, gestos e lip-sync.
+- [ ] Fechar a experiência visual: despertar, legendas, temas, cérebro e visualização de memórias.
+- [ ] Validar a conversa contínua: voz frase por frase e interrupção pela voz, inclusive com eco em notebook sem fone.
+- [ ] Adicionar observabilidade básica: erros, latência, chamadas e, se fizer sentido, custos.
+- [ ] Rodar novamente os testes automatizados.
+- [ ] Rodar typecheck e build final.
+- [ ] Fazer uma bateria de testes manuais com conversas reais e cenários controlados.
+- [ ] Documentar arquitetura, decisões, problemas encontrados e limitações.
+- [ ] Congelar uma release estável de demonstração antes de começar a gravar.
 
-| Seção | Conteúdo |
-|---|---|
-| Conta | Nome, e-mail, foto; login (link por e-mail, Google, Apple); sessões ativas; sair; excluir conta |
-| Assinatura | Plano atual e próxima cobrança; uso do mês contra o limite; upgrade, troca e cancelamento; pagamento e faturas (portal da Stripe) |
-| Kelly | Papel, tom, voz (catálogo ou clonada); "Refazer minha voz" |
-| Conversa | Mãos-livres ou tocar para falar; pausa para encerrar; microfone com teste de volume; legendas |
-| Memória e privacidade | Ver memórias; pausar aprendizado; assuntos proibidos; exportar dados; apagar tudo |
-| Aparência | Tema claro, escuro ou automático; reduzir movimento |
-| Ajuda e sobre | Ajuda, contato, versão, termos, privacidade, créditos 3D |
+## Decisões registradas
 
-Ordem sugerida:
-1. Página com as seções que já funcionam para um usuário (Kelly, Conversa, Memória, Aparência, Ajuda); Conta e Assinatura como "em breve".
-2. Login de verdade (Supabase Auth), memórias por usuário com RLS, no lugar do `LOCAL_USER_ID` fixo.
-3. Assinatura com Stripe (checkout, portal, webhook) e limites de uso por plano, usando o contador que o servidor já tem.
-4. Hospedagem paga (Render pago ou AWS) antes de abrir para outras pessoas.
+- **Conversa contínua e interrupção pela voz entram na demo** (18/10/2026), embora a lista original as deixasse para depois. Já implementadas: o microfone reabre depois de cada resposta; falar por cima do clone o interrompe (tocar nele também); a voz é gerada frase por frase, e a próxima só quando a anterior começa a tocar, então uma interrupção desperdiça no máximo uma frase. O histórico guarda só o que foi ouvido, terminado em "…". Falta validar com voz real e eco.
+- **Configurações enxutas:** Perfil (nome) e Voz (original ou a sua). Nada comercial na demo.
+- **Sem créditos dos modelos 3D na interface** (decisão de 18/10/2026). Os modelos provisórios (Kelly, de skullvez; cérebro, de pranktoy) são CC BY 4.0, licença que pede atribuição; os textos das licenças continuam em `apps/web/public/avatars/*-LICENSE.md`. Para uso público sem atribuição, o caminho é trocar por modelos próprios ou CC0.
+- **"Seu clone"** substitui "Kelly" na interface. O rosto provisório é feminino; um rosto neutro ou adaptado à pessoa fica para depois.
+- **Inglês automático:** o clone responde no idioma da última fala, com vícios de linguagem separados por idioma (`memory.en_…` para o inglês). A abertura, os erros e a interface continuam em português.
+- **Saudação de retorno no Render:** a contagem de memórias às vezes passa do limite de 2,5 s quando o servidor acorda, e a tela inicial mostra a versão de primeiro acesso. Reavaliar na AWS.
 
-## 2. Kelly falando inglês — feito (automático)
+## Não vamos abranger agora
 
-A Kelly responde no idioma da última fala do usuário, português ou inglês; uma fala ambígua ("Okay.") mantém o idioma da conversa. Ela abre sempre em português.
-
-| Peça | Como ficou |
-|---|---|
-| Transcrição | Aceita `pt` e `en`; o texto de apoio pede para transcrever no idioma falado, sem traduzir |
-| Idioma da fala | `detectSpeechLanguage` (`speech-language.ts`): votação por palavras comuns de cada idioma e acentos |
-| Resposta | Regra IDIOMA nas instruções e `replyLanguage` em cada turno; sem misturar idiomas na mesma fala |
-| Vícios de linguagem | Expressões aprendidas em inglês ganham a chave `memory.en_…`; as demais são do português. A análise de linguagem só usa falas do mesmo idioma como prova, e a resposta só recebe as expressões do idioma dela. Jeito de argumentar e preferências declaradas valem para os dois |
-| Memórias | Continuam escritas em português; evidências ficam literais no idioma falado |
-| Voz | Cartesia recebe `en` ou `pt-BR` |
-| Boca | Em inglês, usa os fonemas que a Cartesia devolve (ainda não testado com a voz ligada); em português, segue pela grafia das palavras |
-
-Ainda em português: a abertura do primeiro contato, as mensagens de erro e a interface.
-
-## 3. Pendências menores
-
-- Créditos dos modelos 3D (CC BY 4.0, exigem atribuição): saíram da interface em 17/10/2026. Antes do lançamento, colocar em "Termos e privacidade": "Kelly, woman head with blendshapes", de skullvez, e "Human brain, Cerebrum & Brainstem", de pranktoy, ambos CC BY 4.0, com links e as mudanças feitas. Os textos estão em `apps/web/public/avatars/*-LICENSE.md`.
-
-- Rosto do clone: a interface chama a personagem de "seu clone", mas o modelo 3D provisório (Kelly) é um rosto feminino. Antes do lançamento, um rosto mais neutro e estilizado, ou um avatar que se adapte à pessoa.
-
-- Ligar a clonagem de voz quando o plano Pro da Cartesia estiver ativo (`CARTESIA_PAUSED=0`, `VOICE_CLONING=1`; ver `clonagem-de-voz.md`).
-- Saudação de retorno no Render: a contagem de memórias às vezes passa do limite de 2,5 s quando o servidor acorda, e a tela inicial mostra a versão de primeiro acesso.
+Login e autenticação multiusuário · remover o `LOCAL_USER_ID` e virar multi-tenant · isolamento completo entre usuários · billing, planos, Stripe, trial e assinaturas · onboarding comercial completo · clonagem automática pronta para qualquer usuário · avatar baseado no rosto real de cada usuário · acesso público aberto · painel administrativo · analytics comerciais, métricas de retenção e funil · rate limiting e proteção contra abuso · escala para muitos usuários simultâneos · exportação e exclusão completa de conta · camada comercial de privacidade · landing page e pricing · estrutura completa de SaaS · qualquer posicionamento envolvendo Alzheimer, terapia, benefício clínico ou saúde.

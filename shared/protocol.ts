@@ -16,7 +16,8 @@ export const maxRecalled = 20;
 export type ServerEvent =
   | { type: 'state'; state: ConversationState; text: string }
   | { type: 'transcript'; text: string }
-  | { type: 'audio-output'; mime: 'audio/wav'; phonemes?: PhonemeCue[]; gestures?: GestureCue[] }
+  // A reply arrives sentence by sentence: segment counts from 0, last marks the final one, from/to place it in the spoken text.
+  | { type: 'audio-output'; mime: 'audio/wav'; phonemes?: PhonemeCue[]; gestures?: GestureCue[]; segment?: number; last?: boolean; from?: number; to?: number }
   | { type: 'recall'; memories: RecalledMemory[] }
   | { type: 'usage'; usage: Usage }
   | { type: 'error'; message: string };
@@ -37,6 +38,19 @@ export function parseClientCommand(raw: string): ClientCommand | null {
   }
 }
 
+// While a reply plays, the page reports each segment it starts (so the next one is voiced) and an interruption,
+// with how many characters of the reply the user heard.
+export type SpeechProgress = { type: 'playing'; segment: number } | { type: 'interrupt'; heard: number };
+export function parseSpeechProgress(raw: string): SpeechProgress | null {
+  try {
+    const value: unknown = JSON.parse(raw);
+    if (!isRecord(value)) return null;
+    if (value.type === 'playing' && Number.isSafeInteger(value.segment) && Number(value.segment) >= 0 && Number(value.segment) < 200) return { type: 'playing', segment: Number(value.segment) };
+    if (value.type === 'interrupt' && typeof value.heard === 'number' && Number.isFinite(value.heard) && value.heard >= 0 && value.heard <= 4000) return { type: 'interrupt', heard: value.heard };
+    return null;
+  } catch { return null; }
+}
+
 export function parseAudioInput(raw: string): AudioInput | null {
   try {
     const value: unknown = JSON.parse(raw);
@@ -55,7 +69,10 @@ export function parseServerEvent(raw: string): ServerEvent | null {
       const phonemes = value.phonemes === undefined ? undefined : parsePhonemeCues(value.phonemes);
       const gestures = value.gestures === undefined ? undefined : parseGestureCues(value.gestures);
       if (phonemes === null || gestures === null) return null;
-      return { type: 'audio-output', mime: 'audio/wav', ...(phonemes ? { phonemes } : {}), ...(gestures ? { gestures } : {}) };
+      const count = (key: string) => Number.isSafeInteger(value[key]) && Number(value[key]) >= 0 ? Number(value[key]) : undefined;
+      const segment = count('segment'), from = count('from'), to = count('to');
+      return { type: 'audio-output', mime: 'audio/wav', ...(phonemes ? { phonemes } : {}), ...(gestures ? { gestures } : {}),
+        ...(segment !== undefined ? { segment, last: value.last === true } : {}), ...(from !== undefined && to !== undefined && to >= from ? { from, to } : {}) };
     }
     if (value.type === 'usage' && isRecord(value.usage)) {
       const usage = value.usage;

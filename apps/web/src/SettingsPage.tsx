@@ -2,16 +2,13 @@ import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { voiceStatus, type VoiceCloneStatus } from './voice-sample';
 
-// The gear: account-level settings only. Kelly herself is not configurable; the one choice about her is whose voice she uses.
-// Login, plans and account actions arrive with the launch and are shown as such until then.
+// The gear: the profile and the one choice about the clone, whose voice it uses. Nothing else is configurable.
 type Props = { theme: 'light' | 'dark'; voiceClone: VoiceCloneStatus | null; chooseVoice(own: boolean): Promise<void>; redoVoice(): Promise<void>; notify(message: string): void; onClose(): void };
 
-const later = <span className="settings-soon">No lançamento</span>;
-function minutes(seconds: number) { const total = Math.round(seconds / 60); return total === 1 ? '1 min' : `${total} min`; }
+const later = <span className="settings-soon">Em breve</span>;
 
 export default function SettingsPage({ theme, voiceClone, chooseVoice, redoVoice, notify, onClose }: Props) {
   const [name, setName] = useState<string | null>(null);
-  const [usage, setUsage] = useState<{ conversationSeconds: number; replies: number } | null>(null);
   const [saving, setSaving] = useState(false);
   const closeButton = useRef<HTMLButtonElement>(null);
   useEffect(() => {
@@ -29,7 +26,6 @@ export default function SettingsPage({ theme, voiceClone, chooseVoice, redoVoice
       const found = value && (/(?:se chama|chama-se|é)\s+([\p{Lu}][\p{L}'’-]*(?:\s+[\p{Lu}][\p{L}'’-]*)*)/u.exec(value)?.[1] ?? (value.split(/\s+/).length <= 3 ? value : null));
       setName(found ? found.slice(0, 40) : null);
     }).catch(() => {});
-    void fetch('/api/usage').then((response) => response.json()).then((data) => { if (data.enabled) setUsage(data); }).catch(() => {});
   }, []);
 
   const own = !!voiceClone?.ownVoice;
@@ -56,7 +52,7 @@ export default function SettingsPage({ theme, voiceClone, chooseVoice, redoVoice
 
       <section className="settings-card settings-profile" aria-label="Perfil">
         <span className="settings-avatar" aria-hidden="true">{initial}</span>
-        <div><strong>{name ?? 'Você'}</strong><span>O login chega com o lançamento.</span></div>
+        <div><strong>{name ?? 'Você'}</strong></div>
       </section>
 
       <section className="settings-card" aria-labelledby="settings-voice">
@@ -70,19 +66,6 @@ export default function SettingsPage({ theme, voiceClone, chooseVoice, redoVoice
         {voiceClone && own && voiceClone.cloned ? <button className="settings-link" onClick={() => void redo()}>Refazer minha voz</button> : null}
       </section>
 
-      <section className="settings-card" aria-labelledby="settings-plan">
-        <h3 id="settings-plan">Assinatura</h3>
-        <div className="settings-row"><span>Plano</span><strong>Grátis · pré-lançamento</strong></div>
-        <div className="settings-row"><span>Este mês</span><strong>{usage ? `${minutes(usage.conversationSeconds)} de fala · ${usage.replies} ${usage.replies === 1 ? 'resposta' : 'respostas'}` : '—'}</strong></div>
-        <button className="settings-button" disabled>Ver planos {later}</button>
-      </section>
-
-      <section className="settings-card" aria-label="Conta">
-        <div className="settings-row muted"><span>Termos e privacidade</span>{later}</div>
-        <div className="settings-row muted"><span>Sair</span>{later}</div>
-        <div className="settings-row muted danger"><span>Excluir conta</span>{later}</div>
-      </section>
-      <p className="settings-version">talk2urself · versão de testes</p>
     </div>
   </div>, document.body);
 }

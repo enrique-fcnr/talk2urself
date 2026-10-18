@@ -1,6 +1,6 @@
 import Fastify from 'fastify';
 import websocket from '@fastify/websocket';
-import { maxRecalled, maxRecordingBytes, parseAudioInput, parseClientCommand, type AudioInput, type ConversationState, type ServerEvent, type Usage } from '../../../shared/protocol.ts';
+import { maxRecalled, maxRecordingBytes, parseAudioInput, parseClientCommand, parseSpeechProgress, type AudioInput, type ConversationState, type ServerEvent, type Usage } from '../../../shared/protocol.ts';
 import { extractGestures } from '../../../shared/gestures.ts';
 import { openaiTranscriptionModel, type Message, type VoiceProvider } from './voice.ts';
 import { randomUUID } from 'node:crypto';
@@ -11,10 +11,12 @@ import { createLanguageWorker } from './language-worker.ts';
 import { originAllowed, registerWeb } from './access.ts';
 import type { VoiceCloner } from './voice-clone.ts';
 import { detectSpeechLanguage, type SpeechLanguage } from './speech-language.ts';
+import { heardPart, segmentGestures, splitSpeech, type SpeechSegment } from './speech-segments.ts';
+import type { GestureCue } from '../../../shared/gestures.ts';
+import type { TimedSpeech } from './speech-timing.ts';
 
 // webRoot: serve the built web app from there (production).
-export async function createApp(options: { voice?: VoiceProvider; memory?: MemoryService; onUsage?: (record: Record<string, string | number>) => void; onMemoryDiagnostic?: (record: MemoryDiagnosticRecord) => void; webRoot?: string; cloner?: VoiceCloner;
-  monthUsage?: () => Promise<{ conversationSeconds: number; replies: number }> } = {}) {
+export async function createApp(options: { voice?: VoiceProvider; memory?: MemoryService; onUsage?: (record: Record<string, string | number>) => void; onMemoryDiagnostic?: (record: MemoryDiagnosticRecord) => void; webRoot?: string; cloner?: VoiceCloner } = {}) {
   const app = Fastify({ logger: false, trustProxy: true });
   await app.register(websocket, { options: { maxPayload: maxRecordingBytes } });
   if (options.webRoot) registerWeb(app, options.webRoot);
@@ -74,12 +76,6 @@ export async function createApp(options: { voice?: VoiceProvider; memory?: Memor
     try { return await options.cloner.choose(body.ownVoice, AbortSignal.timeout(30_000)); }
     catch { return reply.code(503).send({ error: 'Não foi possível trocar a voz agora.' }); }
   });
-  // This month's use, for the subscription card.
-  app.get('/api/usage', async (request, reply) => {
-    if (!originAllowed(request)) return reply.code(403).send({ error: 'Origem não autorizada.' });
-    try { return { enabled: true, ...await (options.monthUsage?.() ?? Promise.resolve({ conversationSeconds: 0, replies: 0 })) }; }
-    catch { return { enabled: false }; }
-  });
   // "Refazer minha voz": deletes the clone and every sample; collecting starts over.
   app.post('/api/voice/reset', async (request, reply) => {
     if (!originAllowed(request)) return reply.code(403).send({ error: 'Origem não autorizada.' });
@@ -116,6 +112,11 @@ export async function createApp(options: { voice?: VoiceProvider; memory?: Memor
     // The language of the conversation: the last one the user spoke (Kelly opens in Portuguese).
     let language: SpeechLanguage = 'pt';
     const usage: Usage = { turns: 0, sttSeconds: 0, ttsCharacters: 0, inputTokens: 0, outputTokens: 0, cachedTokens: 0 };
+    // The reply being spoken, segment by segment. next: the first segment not yet voiced. Later segments are voiced
+    // one at a time, when the page starts playing the previous one, and never after an interruption.
+    type Speech = { text: string; segments: SpeechSegment[]; gestures: GestureCue[]; next: number; turnId?: string; controller: AbortController; queue: Promise<void> };
+    let speech: Speech | undefined;
+    function endSpeech() { speech?.controller.abort(); speech = undefined; }
 
     function send(event: ServerEvent) {
       if (socket.readyState === 1) socket.send(JSON.stringify(event));
@@ -129,6 +130,7 @@ export async function createApp(options: { voice?: VoiceProvider; memory?: Memor
       timer = undefined;
     }
     function cancel() {
+      endSpeech();
       generation++;
       controller?.abort();
       controller = undefined;
@@ -138,6 +140,60 @@ export async function createApp(options: { voice?: VoiceProvider; memory?: Memor
     function recordUsage(service: string, metrics: Record<string, string | number>, started: number) {
       send({ type: 'usage', usage: { ...usage } });
       options.onUsage?.({ service, model: service.startsWith('llm') ? options.voice!.model : service === 'stt' ? openaiTranscriptionModel : 'sonic-3.6', elapsedMs: Date.now() - started, ...metrics });
+    }
+    async function voiceSegment(text: string, signal: AbortSignal): Promise<TimedSpeech> {
+      const voice = options.voice!, started = Date.now();
+      const timed = voice.speakTimed ? await voice.speakTimed(text, signal, language) : { audio: await voice.speak(text, signal, language), phonemes: [] };
+      // Speech that arrives after the turn was cancelled is dropped, as before, without another message to the page.
+      signal.throwIfAborted();
+      usage.ttsCharacters += Array.from(text).length;
+      recordUsage('tts', { characters: Array.from(text).length, phonemes: timed.phonemes.length }, started);
+      return timed;
+    }
+    function sendSegment(current: Speech, index: number, timed: TimedSpeech) {
+      const segment = current.segments[index];
+      send({ type: 'audio-output', mime: 'audio/wav', phonemes: timed.phonemes, gestures: segmentGestures(current.gestures, segment, current.text.length),
+        segment: index, last: index === current.segments.length - 1, from: segment.from, to: segment.to });
+      socket.send(timed.audio, { binary: true });
+    }
+    // The first segment is already voiced: start speaking and keep the rest for when the page asks.
+    function startSpeech(text: string, gestures: GestureCue[], segments: SpeechSegment[], first: TimedSpeech, turnId?: string) {
+      endSpeech();
+      speech = { text, segments, gestures, next: 1, turnId, controller: new AbortController(), queue: Promise.resolve() };
+      changeState('speaking', text);
+      sendSegment(speech, 0, first);
+      // Recovers the conversation if the tab stops confirming playback.
+      timer = setTimeout(() => { endSpeech(); changeState('listening', openingText); }, 180_000);
+    }
+    function voiceNext(segment: number) {
+      const current = speech;
+      if (!current || state !== 'speaking' || segment !== current.next - 1 || current.next >= current.segments.length) return;
+      const index = current.next++;
+      current.queue = current.queue.then(async () => {
+        if (current.controller.signal.aborted) return;
+        try {
+          const timed = await voiceSegment(current.segments[index].text, current.controller.signal);
+          if (speech === current && state === 'speaking' && !current.controller.signal.aborted) sendSegment(current, index, timed);
+        } catch {
+          // The rest cannot be voiced: end the reply where the user stopped hearing it.
+          if (speech !== current || current.controller.signal.aborted) return;
+          interruptSpeech(current.segments[index].from, false);
+        }
+      });
+    }
+    // The user cut in (or the voice failed): keep only what was heard, in the saved turn and in this connection's history.
+    function interruptSpeech(heard: number, byUser = true) {
+      const current = speech;
+      if (!current || state !== 'speaking') return;
+      endSpeech(); clearTimer();
+      const said = heardPart(current.text, heard), kept = said === current.text ? said : `${said}…`;
+      if (said !== current.text) {
+        if (openingText === current.text) openingText = kept;
+        const last = history.at(-1);
+        if (last?.role === 'assistant' && last.content === current.text) last.content = kept;
+        if (current.turnId && options.memory?.trimReply) void options.memory.trimReply(current.turnId, kept, AbortSignal.timeout(10_000)).catch(() => {});
+      }
+      changeState('listening', byUser ? '' : kept);
     }
     async function introduce() {
       const voice = options.voice!;
@@ -158,19 +214,13 @@ export async function createApp(options: { voice?: VoiceProvider; memory?: Memor
         if (!valid()) return;
         // Gesture marks become animation cues and never reach the voice, the screen or the history.
         const spoken = extractGestures(answer.text);
-        started = Date.now();
-        const speech = voice.speakTimed ? await voice.speakTimed(spoken.text, active.signal, language) : { audio: await voice.speak(spoken.text, active.signal, language), phonemes: [] };
-        if (!valid()) return;
-        usage.ttsCharacters += Array.from(spoken.text).length;
-        recordUsage('tts', { characters: Array.from(spoken.text).length, phonemes: speech.phonemes.length }, started);
+        const segments = splitSpeech(spoken.text);
+        const first = await voiceSegment(segments[0].text, active.signal);
         if (!valid()) return;
         // A abertura não inventa uma fala do usuário e não grava fatos no banco.
         openingText = spoken.text;
         introduced = true;
-        changeState('speaking', spoken.text);
-        send({ type: 'audio-output', mime: 'audio/wav', phonemes: speech.phonemes, gestures: spoken.gestures });
-        socket.send(speech.audio, { binary: true });
-        timer = setTimeout(() => { if (valid()) changeState('listening', spoken.text); }, 180_000);
+        startSpeech(spoken.text, spoken.gestures, segments, first);
       } catch {
         if (!valid()) return;
         send({ type: 'error', message: 'Não foi possível concluir a abertura. Você pode começar a falar ou tentar despertar novamente.' });
@@ -232,13 +282,11 @@ export async function createApp(options: { voice?: VoiceProvider; memory?: Memor
         recordUsage('llm', { inputTokens: answer.inputTokens, outputTokens: answer.outputTokens, cachedTokens: answer.cachedTokens }, started);
         if (!valid()) return;
         const spoken = extractGestures(answer.text);
-        started = Date.now();
         phase = 'speech';
-        const speech = voice.speakTimed ? await voice.speakTimed(spoken.text, active.signal, language) : { audio: await voice.speak(spoken.text, active.signal, language), phonemes: [] };
-        if (!valid()) return;
-        usage.ttsCharacters += Array.from(spoken.text).length;
+        // Only the first sentence is voiced before speaking starts; the rest follows while it plays.
+        const segments = splitSpeech(spoken.text);
         usage.turns++;
-        recordUsage('tts', { characters: Array.from(spoken.text).length, phonemes: speech.phonemes.length }, started);
+        const first = await voiceSegment(segments[0].text, active.signal);
         if (!valid()) return;
         if (options.memory && context) {
           if (!answer.learning) throw new Error('Memória: a IA não retornou os dados de continuidade.');
@@ -263,11 +311,7 @@ export async function createApp(options: { voice?: VoiceProvider; memory?: Memor
         history.push(message, { role: 'assistant', content: spoken.text });
         openingText = '';
         while (history.length > 20 || (history.length > 2 && history.reduce((size, item) => size + item.content.length, 0) > 12000)) history.splice(0, 2);
-        changeState('speaking', spoken.text);
-        send({ type: 'audio-output', mime: 'audio/wav', phonemes: speech.phonemes, gestures: spoken.gestures });
-        socket.send(speech.audio, { binary: true });
-        // Recupera a conversa caso a aba deixe de confirmar o fim da reprodução.
-        timer = setTimeout(() => changeState('listening'), 180_000);
+        startSpeech(spoken.text, spoken.gestures, segments, first, options.memory && context ? turnId : undefined);
       } catch (error) {
         if (valid()) {
           if (!phaseFailed) emitDiagnostic(diagnostic, { stage: phase, outcome: 'failed', reason: 'service_error' });
@@ -306,6 +350,12 @@ export async function createApp(options: { voice?: VoiceProvider; memory?: Memor
         send({ type: 'error', message: 'Mensagem muito grande.' });
         return;
       }
+      const progress = parseSpeechProgress(payload.toString());
+      if (progress) {
+        if (progress.type === 'playing') voiceNext(progress.segment);
+        else interruptSpeech(progress.heard);
+        return;
+      }
       const input = parseAudioInput(payload.toString());
       if (input) {
         if (!options.voice || state !== 'listening' || pendingAudio) {
@@ -332,7 +382,7 @@ export async function createApp(options: { voice?: VoiceProvider; memory?: Memor
         return;
       }
       if (command === 'playback-ended' && options.voice && state === 'speaking') {
-        clearTimer();
+        clearTimer(); endSpeech();
         changeState('listening', openingText);
         return;
       }

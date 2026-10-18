@@ -200,7 +200,7 @@ export default function App() {
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 3v2M12 19v2M3 12h2M19 12h2M6 6l1.4 1.4M16.6 16.6 18 18M6 18l1.4-1.4M16.6 7.4 18 6" /><circle cx="12" cy="12" r="3.2" /></svg>
               Acordar seu clone
             </button>
-            <p className="start-note">O microfone só grava quando você toca no seu clone. As memórias ficam guardadas para as próximas conversas.</p>
+            <p className="start-note">Na conversa, o microfone fica aberto e você pode interromper falando. Para encerrar, toque e segure no seu clone.</p>
           </div>
         </section>
       </div>}

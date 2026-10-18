@@ -47,8 +47,13 @@ export default function Captions({ text, transcript, speaking, thinking, playbac
     const lines = captionLines(text, width());
     let frame = 0;
     const tick = () => {
-      const audio = playbackRef.current?.audio, duration = audio?.duration;
-      const progress = audio && Number.isFinite(duration) && duration! > 0 ? audio.currentTime / duration! : 0;
+      const playback = playbackRef.current, audio = playback?.audio, duration = audio?.duration;
+      const played = audio && Number.isFinite(duration) && duration! > 0 ? Math.min(1, audio.currentTime / duration!) : 0;
+      // A reply in segments: this audio covers characters from..to of the whole text.
+      const progress = playback?.from !== undefined && playback.to !== undefined && playback.total
+        ? (playback.from + played * (playback.to - playback.from)) / playback.total : played;
+      // Between segments there is no audio for a moment: keep the line being shown.
+      if (!playback && current.current?.who === 'kelly') { frame = requestAnimationFrame(tick); return; }
       const index = lineAt(lines, progress);
       show({ key: `k:${text.length}:${index}:${lines[index]}`, text: lines[index], who: 'kelly' });
       frame = requestAnimationFrame(tick);

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { recallKey, type Recall } from './brain/layout';
 import { maxRecordingBytes, parseServerEvent, type ClientCommand, type ConversationState, type Usage } from '../../../shared/protocol';
-import { quietPeak, recordMicrophone, type Recording } from './recorder';
+import { quietPeak, recordMicrophone, watchForBargeIn, type Recording } from './recorder';
 import type { AvatarPlayback, PhonemeCue } from '../../../shared/lip-sync';
 import type { GestureCue } from '../../../shared/gestures';
 import { parseCloneStatus, sendVoiceSample, type VoiceCloneStatus } from './voice-sample';
@@ -36,24 +36,63 @@ export function useConversation() {
   const speaker = useRef<HTMLAudioElement | null>(null);
   const generation = useRef(0);
   const startingRef = useRef(false);
+  // The reply arrives in segments (sentences) that play one after another. index: the segment playing now.
+  type Segment = { url: string; cues: PhonemeCue[]; gestures: GestureCue[]; from: number; to: number; last: boolean; segment: number };
+  const queue = useRef<{ segments: Segment[]; index: number; total: number }>({ segments: [], index: -1, total: 0 });
+  // Conversation mode: once the user wakes the clone or talks, the microphone reopens after every reply, and the
+  // user can cut in by speaking. It ends when nobody speaks for a while, or when the clone goes to sleep.
+  const live = useRef(false);
+  const stateRef = useRef<ConversationState>('idle');
 
+  function clearQueue() {
+    for (const segment of queue.current.segments.slice(queue.current.index + 1)) URL.revokeObjectURL(segment.url);
+    queue.current = { segments: [], index: -1, total: 0 };
+  }
+  function sendJson(message: object) { if (socketRef.current?.readyState === WebSocket.OPEN) socketRef.current.send(JSON.stringify(message)); }
+  // Plays segment `index` if it has arrived; the next one follows when it ends, and the last one ends the reply.
+  function playSegment(index: number) {
+    const segment = queue.current.segments[index];
+    // Not here yet: wait for it (it plays as soon as it arrives).
+    if (!segment) { clearPlayer(); queue.current.index = index; return; }
+    clearPlayer(); queue.current.index = index;
+    const audio = speaker.current ?? new Audio(); audio.src = segment.url; const player = { audio, url: segment.url }; playerRef.current = player;
+    playbackRef.current = { audio, cues: segment.cues, gestures: segment.gestures, from: segment.from, to: segment.to, total: queue.current.total };
+    // The server voices the next sentence only once this one starts playing.
+    audio.onplaying = () => { if (playerRef.current === player) sendJson({ type: 'playing', segment: segment.segment }); audio.onplaying = null; };
+    const next = () => {
+      if (playerRef.current !== player) return;
+      if (segment.last) { clearPlayer(); clearQueue(); setNeedsPlayback(false); send('playback-ended'); }
+      else playSegment(index + 1);
+    };
+    audio.onended = next;
+    audio.onerror = () => { if (playerRef.current === player) setError('Não foi possível reproduzir a resposta.'); next(); };
+    void playAnswer();
+  }
+  // How much of the reply the user has heard, in characters, for an interruption.
+  function heard() {
+    const playback = playbackRef.current;
+    if (playback?.from === undefined || playback.to === undefined) return queue.current.segments[queue.current.index]?.from ?? 0;
+    const duration = playback.audio.duration, progress = Number.isFinite(duration) && duration > 0 ? Math.min(1, playback.audio.currentTime / duration) : 0;
+    return Math.round(playback.from + progress * (playback.to - playback.from));
+  }
   function clearPlayer() {
     playbackRef.current = null;
     const player = playerRef.current;
     if (player) {
-      player.audio.onended = null; player.audio.onerror = null; player.audio.pause();
+      player.audio.onended = null; player.audio.onerror = null; player.audio.onplaying = null; player.audio.pause();
       player.audio.removeAttribute('src'); player.audio.load(); URL.revokeObjectURL(player.url); playerRef.current = null;
     }
   }
   function stopMedia() {
-    generation.current++; recorderRef.current?.cancel(); recorderRef.current = null;
+    generation.current++; recorderRef.current?.cancel(); recorderRef.current = null; clearQueue();
     clearTimeout(wakeTimer.current); wakeTimer.current = undefined;
     startingRef.current = false; clearPlayer();
   }
   function resetMediaUi() { setRecording(false); setStarting(false); setSubmitting(false); setNeedsPlayback(false); setWaking(false); }
   function send(command: ClientCommand) {
     if (command !== 'playback-ended') setError('');
-    if (command === 'reset') { stopMedia(); resetMediaUi(); setTranscript(''); setText(''); setError(''); }
+    if (command === 'reset') { live.current = false; stopMedia(); resetMediaUi(); setTranscript(''); setText(''); setError(''); }
+    if (command === 'start') live.current = true;
     if (socketRef.current?.readyState === WebSocket.OPEN) {
       if (command === 'start') {
         clearTimeout(wakeTimer.current); setWaking(true);
@@ -88,6 +127,7 @@ export function useConversation() {
       let expectingAudio = false;
       let phonemes: PhonemeCue[] = [];
       let gestures: GestureCue[] = [];
+      let meta = { segment: 0, last: true, from: 0, to: 0 };
       socket.onopen = () => {
         if (disposed) return;
         retryDelay = 1000; setConnection('online'); setError(''); setMode('loading'); setUsage(null);
@@ -104,13 +144,14 @@ export function useConversation() {
         if (disposed || socketRef.current !== socket) return;
         if (message.data instanceof ArrayBuffer) {
           if (!expectingAudio) return;
-          expectingAudio = false; clearPlayer();
+          expectingAudio = false;
           const url = URL.createObjectURL(new Blob([message.data], { type: 'audio/wav' }));
-          const audio = speaker.current ?? new Audio(); audio.src = url; const player = { audio, url }; playerRef.current = player;
-          playbackRef.current = { audio, cues: phonemes, gestures }; phonemes = []; gestures = [];
-          audio.onended = () => { if (playerRef.current === player) { clearPlayer(); setNeedsPlayback(false); send('playback-ended'); } };
-          audio.onerror = () => { if (playerRef.current === player) { clearPlayer(); setNeedsPlayback(false); setError('Não foi possível reproduzir a resposta.'); send('playback-ended'); } };
-          void playAnswer(); return;
+          if (meta.segment === 0) clearQueue();
+          queue.current.segments[meta.segment] = { url, cues: phonemes, gestures, ...meta };
+          phonemes = []; gestures = [];
+          // Play it now if it is the first one, or if the previous one already finished and was waiting for it.
+          if (meta.segment === 0 || (queue.current.index === meta.segment && !playerRef.current)) playSegment(meta.segment);
+          return;
         }
         if (typeof message.data !== 'string') return;
         const event = parseServerEvent(message.data);
@@ -125,10 +166,16 @@ export function useConversation() {
           if (take && cloneRef.current?.collecting) void sendVoiceSample(take).then((status) => { if (status) { cloneRef.current = status; setVoiceClone(status); } }).catch(() => {});
           return;
         }
-        if (event.type === 'audio-output') { expectingAudio = true; phonemes = event.phonemes ?? []; gestures = event.gestures ?? []; return; }
+        if (event.type === 'audio-output') {
+          expectingAudio = true; phonemes = event.phonemes ?? []; gestures = event.gestures ?? [];
+          meta = { segment: event.segment ?? 0, last: event.segment === undefined || !!event.last, from: event.from ?? 0, to: event.to ?? 0 };
+          return;
+        }
+        stateRef.current = event.state;
+        if (event.state === 'speaking') queue.current.total = event.text.length;
         setState(event.state); setText(event.text); setSubmitting(false);
         if (event.state === 'idle') { expectingAudio = false; stopMedia(); resetMediaUi(); setTranscript(''); }
-        if (event.state === 'listening') { expectingAudio = false; clearPlayer(); setNeedsPlayback(false); }
+        if (event.state === 'listening') { expectingAudio = false; clearPlayer(); clearQueue(); setNeedsPlayback(false); }
       };
       socket.onerror = () => { if (!disposed) setError('A conexão está indisponível. Tentaremos novamente.'); };
       socket.onclose = () => {
@@ -142,8 +189,11 @@ export function useConversation() {
     return () => { disposed = true; clearTimeout(reconnect); stopMedia(); socketRef.current?.close(); socketRef.current = null; };
   }, []);
 
-  async function startRecording() {
-    if (mode !== 'voice' || state !== 'listening' || connection !== 'online' || startingRef.current || recorderRef.current || submitting) return;
+  // takeover: the user cut in while the clone spoke; the microphone is already open and they are already talking.
+  async function startRecording(takeover?: { stream: MediaStream; floor: number }) {
+    if (!takeover && (mode !== 'voice' || state !== 'listening' || connection !== 'online' || startingRef.current || recorderRef.current || submitting)) return;
+    if (takeover && recorderRef.current) { takeover.stream.getTracks().forEach((track) => track.stop()); return; }
+    live.current = true;
     startingRef.current = true; setStarting(true); setError(''); setTranscript(''); setText('');
     const current = generation.current;
     try {
@@ -164,11 +214,13 @@ export function useConversation() {
         } catch { if (current === generation.current) { setSubmitting(false); setError('Não foi possível enviar a gravação. Confira a conexão e tente novamente.'); } }
       }, (message) => { if (current === generation.current) { recorderRef.current = null; setRecording(false); setSubmitting(false); setError(message); } },
       // Hands-free: the turn ends by itself after a pause; if nothing was said, nothing is sent.
-      { handsFree: true, onSilent: () => { if (current === generation.current) { recorderRef.current = null; setRecording(false); setError('Não ouvi nada. Toque quando quiser falar.'); } } });
+      { handsFree: true, ...(takeover ? { stream: takeover.stream, floor: takeover.floor } : {}),
+        onSilent: () => { if (current === generation.current) { recorderRef.current = null; setRecording(false); live.current = false; setError('Não ouvi nada. Toque quando quiser falar.'); } } });
       if (current !== generation.current) { recorder.cancel(); return; }
       recorderRef.current = recorder; setRecording(true);
     } catch (error) {
       if (current !== generation.current) return;
+      live.current = false;
       setError(error instanceof DOMException && error.name === 'NotAllowedError' ? 'Autorize o microfone no navegador para conversar.'
         : error instanceof DOMException && error.name === 'NotFoundError' ? 'Não encontramos um microfone conectado.'
         : error instanceof Error ? error.message : 'Não foi possível acessar o microfone.');
@@ -177,16 +229,27 @@ export function useConversation() {
   function finishRecording() { recorderRef.current?.finish(); }
   // Loudness of the user's voice while recording, for Kelly to react to (0 when not recording).
   function micLevel() { return recorderRef.current?.level() ?? 0; }
-  // Tapping Kelly while she speaks cuts her off and starts listening, as in a real conversation.
-  const pendingRecord = useRef(false);
+  // Cutting the clone off, by tapping it or by speaking over it: the server learns how much was heard and stops voicing the rest.
   function interrupt() {
-    if (state !== 'speaking' || mode !== 'voice') return;
-    clearPlayer(); setNeedsPlayback(false); pendingRecord.current = true; send('playback-ended');
+    if (stateRef.current !== 'speaking' || mode !== 'voice') return;
+    const said = heard();
+    clearPlayer(); clearQueue(); setNeedsPlayback(false); live.current = true;
+    sendJson({ type: 'interrupt', heard: said });
   }
+  // Conversation mode: after each reply the microphone reopens by itself.
   useEffect(() => {
-    if (state === 'listening' && pendingRecord.current) { pendingRecord.current = false; void startRecording(); }
-    else if (state !== 'speaking') pendingRecord.current = false;
-  }, [state]);
+    if (state === 'listening' && live.current && !submitting && !needsPlayback && !recorderRef.current && !startingRef.current) void startRecording();
+  }, [state, submitting, needsPlayback]);
+  // While the clone speaks, speaking over it interrupts it and the recording continues from there.
+  useEffect(() => {
+    if (state !== 'speaking' || mode !== 'voice' || !live.current || needsPlayback) return;
+    let watcher: { stop(): void } | undefined, stopped = false;
+    void watchForBargeIn((stream, floor) => {
+      if (stopped || stateRef.current !== 'speaking') { stream.getTracks().forEach((track) => track.stop()); return; }
+      interrupt(); void startRecording({ stream, floor });
+    }).then((started) => { if (stopped) started.stop(); else watcher = started; }).catch(() => { /* Tapping still interrupts. */ });
+    return () => { stopped = true; watcher?.stop(); };
+  }, [state, mode, needsPlayback]);
   // "Refazer minha voz": the server deletes the clone and every sample, and collecting starts over.
   async function redoVoice() {
     const response = await fetch('/api/voice/reset', { method: 'POST' });
