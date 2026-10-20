@@ -305,3 +305,14 @@ test('lacunas seguem a ordem de descoberta, começam pelo papel e nunca incluem 
   for (const sensitive of ['difficult_experiences', 'life_events', 'expressions', 'reasoning_style']) assert.equal((discoveryOrder as readonly string[]).includes(sensitive), false);
   assert.equal(discoveryOrder.every((key) => initialCategories.some(([category]) => category === key)), true);
 });
+
+test('o núcleo de identidade lista o que falta, e uma recusa explícita também conta como resolvido', async () => {
+  const { identityCore } = await import('./categories.ts');
+  const { memoryContextText } = await import('./memory.ts');
+  assert.ok(identityCore.some((item) => item.categories.includes('finances')));
+  assert.ok(identityCore.some((item) => item.categories.includes('faith')));
+  assert.ok(identityCore.some((item) => item.categories.includes('health')));
+  const text = memoryContextText({ summary: '', profile: [], relevant: [], recent: [], version: 0, gaps: [], identityGaps: ['saúde e como se cuida'] });
+  assert.match(text, /"identidadeEmFormacao":\["saúde e como se cuida"\]/);
+  assert.doesNotMatch(memoryContextText({ summary: '', profile: [], relevant: [], recent: [], version: 0, gaps: [], identityGaps: [] }), /identidadeEmFormacao/);
+});

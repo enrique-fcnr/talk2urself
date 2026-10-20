@@ -536,7 +536,11 @@ test('instruções orientam o papel e a descoberta guiada sem dados pessoais', a
   assert.match(characterInstructions, /PAPEL\. O fato da categoria assistant_role/);
   assert.match(characterInstructions, /Cobrar: retome compromissos/);
   assert.match(characterInstructions, /DESCOBERTA GUIADA\. .*uma pergunta por fala/);
-  assert.match(characterInstructions, /Nunca abra saúde, fé, dinheiro pessoal, família ou experiências difíceis/);
+  // Identity first: money, faith, health and relationships are drawn out gently, never pried; only an explicit refusal stops it.
+  assert.match(characterInstructions, /IDENTIDADE EM FORMAÇÃO\. .*identidadeEmFormacao/);
+  assert.match(characterInstructions, /Só pare de buscar um assunto se ele disser explicitamente que não quer falar dele/);
+  assert.match(characterInstructions, /Nunca peça relatos de traumas/);
+  assert.equal(characterInstructions.includes('Nunca abra saúde'), false);
   assert.match(openingInstructions(), /papel conhecido \(assistant_role\)/);
 });
 

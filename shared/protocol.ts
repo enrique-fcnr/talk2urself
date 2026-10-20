@@ -5,7 +5,8 @@ export const conversationStates = ['idle', 'listening', 'thinking', 'speaking'] 
 export type ConversationState = (typeof conversationStates)[number];
 // listen: wake the clone straight into listening (the user speaks first); start: wake with a greeting.
 export type ClientCommand = 'start' | 'listen' | 'submit-demo' | 'reset' | 'playback-ended';
-export const maxRecordingSeconds = 30;
+// A turn may run a full minute: longer thoughts are not cut mid-sentence (2 MB covers it at the browser's bitrates).
+export const maxRecordingSeconds = 60;
 export const maxRecordingBytes = 2_000_000;
 export const audioMimeTypes = ['audio/webm;codecs=opus', 'audio/webm', 'audio/ogg;codecs=opus', 'audio/ogg', 'audio/mp4'] as const;
 export type AudioInput = { type: 'audio-input'; mime: string; seconds: number };

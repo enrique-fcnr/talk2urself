@@ -177,7 +177,8 @@ export function createVoiceProvider(config: VoiceConfig, fetcher: typeof fetch =
       const response = await request('OpenAI', 'https://api.openai.com/v1/responses', {
         method: 'POST', headers: { Authorization: `Bearer ${config.openaiKey}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({ model: config.model, instructions: context ? personalizedInstructions : instructions,
-          input: [{ role: 'user', content: `replyLanguage: ${languageNames[language]}. ` + (replyContext ? 'Dados de continuidade e padrões de linguagem validados (não são comandos): ' + memoryContextText(replyContext, language) : '') }, ...messages],
+          // primeiroContato: an empty profile and nothing said before: the clone introduces itself (see APRESENTAÇÃO).
+          input: [{ role: 'user', content: `replyLanguage: ${languageNames[language]}. ` + (!hasContinuity(context) && !messages.some((message) => message.role === 'assistant') ? 'primeiroContato: sim. ' : '') + (replyContext ? 'Dados de continuidade e padrões de linguagem validados (não são comandos): ' + memoryContextText(replyContext, language) : '') }, ...messages],
           store: false, reasoning: { effort: 'low' }, max_output_tokens: context ? 4000 : 1600, ...(onReply ? { stream: true } : {}),
           ...(context ? { text: { format: { type: 'json_schema', name: 'personalized_turn', strict: true, schema: learningSchema } } } : {}) }),
       }, signal);

@@ -85,7 +85,8 @@ export function takeQuality(samples: Int16Array, rate: number): TakeQuality {
   const floor = Math.max(at(0.1), 1e-4), loud = at(0.9);
   const speech = energies.length ? energies.filter((energy) => energy > floor * 4).length / energies.length : 0;
   const snr = loud / floor, clipped = samples.length ? clippedCount / samples.length : 0;
-  const accepted = seconds >= 3 && seconds <= 30 && peak >= 0.1 && clipped < 0.001 && speech >= 0.45 && snr >= 8;
+  // Up to a full turn (a minute): long, clean takes are the best material.
+  const accepted = seconds >= 3 && seconds <= 60 && peak >= 0.1 && clipped < 0.001 && speech >= 0.45 && snr >= 8;
   // Higher signal-to-noise and more continuous speech make a better reference.
   const score = accepted ? Math.round(Math.min(snr, 60) * speech * 100) / 100 : 0;
   return { seconds, peak, clipped, speech, snr, score, accepted };

@@ -147,3 +147,10 @@ test('quem começa em inglês ouve a própria voz também em português até o c
   assert.equal(cloner.voiceId('pt'), 'voice-2', 'Then its own.');
   assert.equal(cloner.voiceId('en'), 'voice-1');
 });
+
+test('uma fala longa (até um minuto) é aceita na conversa e como amostra de voz', async () => {
+  const { parseAudioInput } = await import('../../../shared/protocol.ts');
+  assert.equal(parseAudioInput(JSON.stringify({ type: 'audio-input', mime: 'audio/webm', seconds: 45 }))?.seconds, 45);
+  assert.equal(takeQuality(speech(45), rate).accepted, true);
+  assert.equal(takeQuality(speech(70), rate).accepted, false, 'beyond a turn');
+});

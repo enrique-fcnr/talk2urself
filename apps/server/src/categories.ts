@@ -18,11 +18,29 @@ export const initialCategories = [
   ['expressions', 'Expressões', 'Expressões recorrentes em várias falas', 305],
   ['reasoning_style', 'Raciocínio', 'Maneira observada de avaliar decisões', 285],
   ['assistant_role', 'Meu papel', 'O que o usuário quer que o personagem faça por ele: planejar, cobrar, ter ideias, decidir', 65],
+  ['finances', 'Dinheiro', 'Situação financeira e relação com dinheiro, como o usuário relata', 135],
+  ['faith', 'Fé e espiritualidade', 'Crenças, fé e espiritualidade, como o usuário relata', 260],
+  ['health', 'Saúde', 'Saúde física e mental e como o usuário se cuida, como ele relata', 195],
 ] as const;
+// The core of who the clone is: until each of these is known (or the user explicitly declined it), the clone keeps
+// steering the conversation toward it, one question at a time. Any one of the listed categories covers a topic.
+export const identityCore: readonly { categories: readonly string[]; topic: string }[] = [
+  { categories: ['identity'], topic: 'nome, idade ou fase da vida, onde mora' },
+  { categories: ['personal_life', 'family', 'friends'], topic: 'com quem divide a vida: família, relacionamento, amigos próximos' },
+  { categories: ['work', 'studies'], topic: 'trabalho ou estudo' },
+  { categories: ['routine'], topic: 'como é um dia comum' },
+  { categories: ['interests', 'preferences'], topic: 'do que gosta, o que faz no tempo livre' },
+  { categories: ['goals'], topic: 'o que quer da vida agora' },
+  { categories: ['finances', 'constraints'], topic: 'relação com dinheiro e situação financeira' },
+  { categories: ['faith', 'principles'], topic: 'no que acredita: fé, espiritualidade, valores' },
+  { categories: ['health'], topic: 'saúde e como se cuida' },
+  { categories: ['assistant_role'], topic: 'como o clone pode ajudar' },
+  { categories: ['speaking_preferences'], topic: 'se prefere um clone direto ou cuidadoso' },
+];
 // Order in which the character discovers missing topics across visits (one per visit, after what the user brings).
-// Sensitive topics and patterns that are only observed are never asked about, so they are not gaps to pursue.
+// Difficult experiences and patterns that are only observed are never asked about, so they are not gaps to pursue.
 export const discoveryOrder = ['identity', 'assistant_role', 'work', 'goals', 'constraints', 'routine', 'principles',
-  'studies', 'interests', 'friends', 'family', 'personal_life', 'preferences', 'speaking_preferences'] as const;
+  'studies', 'interests', 'friends', 'family', 'personal_life', 'finances', 'faith', 'health', 'preferences', 'speaking_preferences'] as const;
 export const categoryForProfile: Record<string, string> = { name: 'identity', life_context: 'identity',
   ...Object.fromEntries(initialCategories.map(([key]) => [key, key])) };
 const aliases: Record<string, string> = { estudo: 'studies', estudos: 'studies', educacao: 'studies', education: 'studies',

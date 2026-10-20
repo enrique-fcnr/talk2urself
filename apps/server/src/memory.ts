@@ -1,7 +1,7 @@
 import type { Message } from './voice.ts';
 import { emitDiagnostic, type DiagnosticReason, type DiagnosticSink, type DiagnosticStage, type DiagnosticField, type DiagnosticDetail } from './memory-diagnostics.ts';
 import type { VectorMemory, VectorSnapshot } from '../../../shared/vector-memory.ts';
-import { categoryForProfile, categoryKey, cosine, discoveryOrder, initialCategories, initialColor, semanticColor, type Category } from './categories.ts';
+import { categoryForProfile, categoryKey, cosine, discoveryOrder, identityCore, initialCategories, initialColor, semanticColor, type Category } from './categories.ts';
 import { forLanguage, type SpeechLanguage } from './speech-language.ts';
 
 // Campos desconhecidos permanecem vazios: uma lacuna nunca vira um fato inventado.
@@ -31,7 +31,8 @@ export type MemoryUpdate = { slot: string; category: string; categoryDescription
   languageEvidence?: LanguageSource[]; candidateIds?: string[] };
 export type Learning = { summary: string; updates: MemoryUpdate[] };
 export type StoredMemory = { slot: string; category?: string; value: string; evidence: string; basis: string; status: 'known' | 'declined'; recordedAt?: string };
-export type MemoryContext = { speechLanguage?: SpeechLanguage; summary: string; profile: StoredMemory[]; relevant: StoredMemory[]; recent: Message[]; version: number; gaps: string[];
+// identityGaps: the core topics the clone still does not know about the user (see identityCore).
+export type MemoryContext = { speechLanguage?: SpeechLanguage; summary: string; profile: StoredMemory[]; relevant: StoredMemory[]; recent: Message[]; version: number; gaps: string[]; identityGaps?: string[];
   categories?: Category[]; catalog?: { slot: string; value: string; category: string | null; status: string }[]; language?: LanguageContext };
 export interface MemoryService {
   acquire(): (() => void) | null;
@@ -148,7 +149,8 @@ export function memoryContextText(context: MemoryContext, language?: SpeechLangu
   const pick = <T extends { slot: string; category?: string | null }>(items: T[]) => language ? forLanguage(items, language) : items;
   return JSON.stringify({ referenceDate: new Date().toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' }), summary: context.summary, profile: pick(context.profile), relevant: pick(context.relevant),
     categories: context.categories?.map(({ key, label, description }) => ({ key, label, description })), catalog: context.catalog && pick(context.catalog),
-    gaps: context.gaps.map((slot) => ({ slot, topic: initialCategories.find(([key]) => key === slot)?.[2] ?? profileSlots[slot as keyof typeof profileSlots] })) });
+    gaps: context.gaps.map((slot) => ({ slot, topic: initialCategories.find(([key]) => key === slot)?.[2] ?? profileSlots[slot as keyof typeof profileSlots] })),
+    ...(context.identityGaps?.length ? { identidadeEmFormacao: context.identityGaps } : {}) });
 }
 
 export const learningSchema = {
@@ -179,6 +181,8 @@ function parseContext(data: unknown): MemoryContext {
   const recent: Message[] = data.recent.filter(object).filter((row) => typeof row.user_text === 'string' && typeof row.assistant_text === 'string')
     .flatMap((row) => [{ role: 'user' as const, content: String(row.user_text) }, { role: 'assistant' as const, content: String(row.assistant_text) }]);
   while (recent.length > 2 && recent.reduce((length, message) => length + message.content.length, 0) > 12000) recent.splice(0, 2);
+  const known = (key: string) => [...profile, ...relevant].some((row) => row.category === key) ||
+    (Array.isArray(data.catalog) && data.catalog.filter(object).some((row) => row.category === key));
   return { summary: data.summary.slice(0, 2400), profile, relevant, recent, version: Number(data.version),
     categories: Array.isArray(data.categories) ? data.categories.filter(object).filter((row) =>
       ['key','label','description','color'].every((key) => typeof row[key] === 'string')) as Category[] : [],
@@ -186,8 +190,9 @@ function parseContext(data: unknown): MemoryContext {
       typeof row.value === 'string' && typeof row.status === 'string' && (row.category === null || typeof row.category === 'string')) as MemoryContext['catalog'] : [],
     // Lacunas são assuntos sem relatos; ter um fato não preenche toda a categoria.
     // Topics still unknown, in discovery order; sensitive or observed-only categories are not gaps to ask about.
-    gaps: discoveryOrder.filter((key) => ![...profile, ...relevant].some((row) => row.category === key) &&
-      !(Array.isArray(data.catalog) && data.catalog.filter(object).some((row) => row.category === key))) };
+    gaps: discoveryOrder.filter((key) => !known(key)),
+    // A core topic counts once anything is saved under it, or the user declined it.
+    identityGaps: identityCore.filter((item) => !item.categories.some(known)).map((item) => item.topic) };
 }
 
 export function createMemoryService(config: MemoryConfig, fetcher: typeof fetch = fetch,
