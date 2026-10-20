@@ -15,13 +15,8 @@ type Focus = { point: BrainPoint; pinned: boolean };
 const size = .82, cameraRest = 3.3, cameraStart = 3.9, introSeconds = 1.2, closeSeconds = .6;
 // Seconds a new memory takes to fly to its place, and between memories when several arrive together.
 const flySeconds = 1.6, flyStagger = .09, moveSeconds = 1.2;
-const seenKey = 'talk2urself-brain-seen';
 const fallbackColor = '#b58cff';
 const ease = (t: number) => t < 0 ? 0 : t > 1 ? 1 : 1 - Math.pow(1 - t, 3);
-function readSeen(): Set<string> | null {
-  try { const raw = localStorage.getItem(seenKey); return raw ? new Set(JSON.parse(raw) as string[]) : null; } catch { return null; }
-}
-function writeSeen(ids: string[]) { try { localStorage.setItem(seenKey, JSON.stringify(ids)); } catch { /* Fly-ins simply repeat without storage. */ } }
 const label = (point: BrainPoint) => point.memory.category?.label ?? 'Lembrança';
 const color = (point: BrainPoint) => point.memory.category?.color ?? fallbackColor;
 
@@ -106,7 +101,10 @@ export default function BrainView({ origin, recall, theme = 'dark', onClose, onL
     // A three-quarter view from slightly above: the brain reads as a brain, not an egg.
     camera.position.set(2.1, .9, 2.3).setLength(reduced ? cameraRest : cameraStart);
     const controls = new OrbitControls(camera, renderer.domElement);
-    Object.assign(controls, { enableDamping: true, dampingFactor: .08, enablePan: false, minDistance: 1.6, maxDistance: 6, autoRotate: !reduced, autoRotateSpeed: .55, rotateSpeed: .6, zoomSpeed: .7 });
+    // Pinch or scroll zooms toward the point under the fingers or cursor, close enough to read the memories one by one.
+    Object.assign(controls, { enableDamping: true, dampingFactor: .08, enablePan: false, minDistance: .95, maxDistance: 6, autoRotate: !reduced, autoRotateSpeed: .55, rotateSpeed: .6, zoomSpeed: .9, zoomToCursor: true });
+    // Turning on its own stops while a memory is pinned, while leaving, and while zoomed in close.
+    let spinning = !reduced;
     // The hologram arrives once its shape has loaded; memories and dust are placed in the same units meanwhile.
     let holo: HoloBrain | undefined, disposed = false;
     void loadBrainShape().then((geometry) => {
@@ -159,23 +157,20 @@ export default function BrainView({ origin, recall, theme = 'dark', onClose, onL
     function markRecall(recall: Recall | null) { for (const item of live) item.recalled = !!recall?.keys.has(recallKey(item.point.memory.slot, item.point.memory.value)); }
     function setLayout(next: BrainLayout) {
       const previous = new Map(live.map((item) => [item.point.id, item]));
-      const seen = readSeen(), everSeen = new Set(seen ?? []);
       let arrivals = 0;
       live = next.points.map((point) => {
         const to = toScene(point.position), old = previous.get(point.id);
-        const isNew = !old && (!firstLayout || !everSeen.has(point.id));
+        // On opening, every memory is already in its place; only one learned while the brain is open flies in.
+        const isNew = !old && !firstLayout;
         const from = old ? old.now.clone() : isNew && !reduced
           ? to.clone().add(new THREE.Vector3((Math.random() - .5) * 1.5, 2.4 + Math.random(), (Math.random() - .5) * 1.5)) : to.clone();
         const delay = isNew ? arrivals++ * flyStagger : 0;
         return { point, from, to, now: from.clone(), start: seconds + delay, duration: reduced ? 0 : isNew ? flySeconds : old ? moveSeconds : 0,
           flash: isNew ? 1 : old?.flash ?? 0, recalled: false, color: new THREE.Color(color(point)), dim: old?.dim ?? 1 };
       });
-      // Opening the brain for the first time in this browser: every memory flies in once, quickly.
-      if (firstLayout && seen === null) live.forEach((item, i) => { item.start = seconds + .5 + Math.min(i * .035, 2); item.duration = reduced ? 0 : flySeconds; item.flash = 1; });
       firstLayout = false;
       synapses = next.synapses;
       markRecall(recallRef.current);
-      writeSeen(live.map((item) => item.point.id));
       pointGeometry.dispose(); lineGeometry.dispose();
       pointGeometry = new THREE.BufferGeometry();
       pointGeometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(live.length * 3), 3));
@@ -196,9 +191,9 @@ export default function BrainView({ origin, recall, theme = 'dark', onClose, onL
       setLayout,
       setRecall(recall) { markRecall(recall); if (recall && Date.now() - recall.at < 30_000) recallBurst = 1; },
       // A pinned memory holds the brain still, so its card stays put while it is read.
-      select(id) { selected = id; controls.autoRotate = !reduced && !id && leaving < 0; },
+      select(id) { selected = id; spinning = !reduced && !id && leaving < 0; },
       filter(key) { only = key; },
-      leave() { leaving = seconds; controls.autoRotate = false; },
+      leave() { leaving = seconds; spinning = false; },
     };
 
     if (import.meta.env.DEV) Object.assign(window, { brainRecall: (count = 3) => { const recall = { keys: new Set(live.slice(0, count).map((item) => recallKey(item.point.memory.slot, item.point.memory.value))), at: Date.now() }; markRecall(recall); recallBurst = 1; },
@@ -259,6 +254,7 @@ export default function BrainView({ origin, recall, theme = 'dark', onClose, onL
       dustMaterial.opacity = dustOpacity * fade; dust.rotation.y = seconds * .02;
       if (!reduced && seconds < introSeconds + .05) camera.position.setLength(cameraStart + (cameraRest - cameraStart) * intro);
       if (outro > 0) camera.position.setLength(cameraRest + (cameraStart - cameraRest) * outro * .4);
+      controls.autoRotate = spinning && camera.position.length() > 2.4;
       controls.update();
       recallBurst = Math.max(0, recallBurst - dt / 2.4);
       if (live.length) {

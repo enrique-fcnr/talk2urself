@@ -80,5 +80,7 @@ export function mouthPoseAt(cues: PhonemeCue[], seconds: number, playing: boolea
   if (total > 1) for (const key of mouthMorphs) if (pose[key] !== undefined) pose[key]! /= total;
   return pose;
 }
+// The playback clock of a reply (an audio element satisfies it, and so does a streamed segment).
+export type PlaybackClock = { readonly currentTime: number; readonly duration: number; readonly paused: boolean; readonly ended: boolean };
 // from/to/total: where this audio's words sit in the whole reply (characters), when a reply plays in segments.
-export type AvatarPlayback = { audio: HTMLAudioElement; cues: PhonemeCue[]; gestures: GestureCue[]; from?: number; to?: number; total?: number };
+export type AvatarPlayback = { audio: PlaybackClock; cues: PhonemeCue[]; gestures: GestureCue[]; from?: number; to?: number; total?: number };

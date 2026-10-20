@@ -63,7 +63,14 @@
 @media (max-width: 700px) {
   .brain-header { padding: 16px 18px; }
   /* One swipeable row of subjects, so the brain keeps the screen. */
-  .brain-subjects { flex-wrap: nowrap; justify-content: flex-start; overflow-x: auto; margin: 0 -24px 10px; padding: 2px 24px; scrollbar-width: none; }
+  /* The row takes touches itself (the footer around it lets them through to the brain), scrolls sideways with the
+     finger, and fades at both edges so it is clear there is more to see. */
+  .brain-subjects { pointer-events: auto; touch-action: pan-x; flex-wrap: nowrap; justify-content: flex-start; overflow-x: auto; overscroll-behavior-x: contain;
+    -webkit-overflow-scrolling: touch; scroll-snap-type: x proximity; margin: 0 -24px 10px; padding: 2px 24px; scrollbar-width: none;
+    -webkit-mask-image: linear-gradient(90deg, transparent, #000 18px, #000 calc(100% - 28px), transparent); mask-image: linear-gradient(90deg, transparent, #000 18px, #000 calc(100% - 28px), transparent); }
+  .brain-subjects li { scroll-snap-align: start; scroll-margin-left: 24px; }
+  .brain-subjects button { min-height: 36px; padding: 6px 13px; }
+  .brain-subjects li:last-child { padding-right: 12px; }
   .brain-subjects::-webkit-scrollbar { display: none; }
   .brain-subjects li { flex: none; }
 }

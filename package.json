@@ -5,19 +5,23 @@
   "type": "module",
   "scripts": {
     "dev": "node scripts/dev.mjs",
+    "dev:lan": "node scripts/dev.mjs --lan",
+    "preview:lan": "node scripts/dev.mjs --lan --preview",
     "check": "tsc --noEmit",
-    "test": "node --import tsx --test apps/server/src/app.test.ts apps/server/src/voice.test.ts apps/server/src/speech-timing.test.ts apps/server/src/memory.test.ts apps/server/src/language-worker.test.ts apps/server/src/voice-clone.test.ts apps/server/src/speech-language.test.ts apps/web/src/recorder.test.ts apps/web/src/vectors/projection.test.ts apps/web/src/brain/layout.test.ts apps/web/src/captions.test.ts shared/gestures.test.ts apps/web/src/avatar/crown.test.ts apps/web/src/avatar/portrait.test.ts",
+    "test": "node --import tsx --test apps/server/src/app.test.ts apps/server/src/voice.test.ts apps/server/src/speech-timing.test.ts apps/server/src/memory.test.ts apps/server/src/language-worker.test.ts apps/server/src/voice-clone.test.ts apps/server/src/speech-language.test.ts apps/server/src/reply-stream.test.ts apps/server/src/turn-end.test.ts apps/web/src/recorder.test.ts apps/web/src/vectors/projection.test.ts apps/web/src/brain/layout.test.ts apps/web/src/captions.test.ts shared/gestures.test.ts apps/web/src/avatar/crown.test.ts apps/web/src/avatar/portrait.test.ts",
     "build": "npm run check && vite build apps/web"
   },
   "dependencies": {
     "@fastify/websocket": "11.3.3",
     "fastify": "5.12.5",
+    "onnxruntime-web": "1.30.0",
     "plotly.js-gl3d-dist-min": "4.1.2",
     "react": "19.3.0",
     "react-dom": "19.3.0",
     "three": "0.180.0"
   },
   "devDependencies": {
+    "@ricky0123/vad-web": "0.0.31",
     "@types/node": "^22.0.0",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",

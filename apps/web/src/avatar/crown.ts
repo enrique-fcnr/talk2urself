@@ -184,7 +184,9 @@ export function createCrown(stage: THREE.Object3D, head: THREE.Object3D): Crown 
   root.add(wave); wave.updateMatrixWorld(true); head.attach(wave);
   const waveBase = wave.scale.clone();
   let inviting = false, waveClock = 2.5, brainOut = false, shown = true;
-  const hitSphere = new THREE.Sphere(), hitScale = new THREE.Vector3(), hitRadius = Math.max(brain.radii.x, brain.radii.y, brain.radii.z) * 1.15;
+  // The tap target is the brain itself: a sphere the size of the brain, counting only its upper part, the one that shows
+  // above the opened skull (never the forehead or the face).
+  const hitSphere = new THREE.Sphere(), hitScale = new THREE.Vector3(), hitPoint = new THREE.Vector3(), hitRadius = Math.max(brain.radii.x, brain.radii.y, brain.radii.z);
 
   const ring = new THREE.Group(); ring.position.copy(orbit.centre); ring.rotation.copy(orbit.tilt);
   root.add(ring); ring.updateMatrixWorld(true); head.attach(ring);
@@ -242,7 +244,7 @@ export function createCrown(stage: THREE.Object3D, head: THREE.Object3D): Crown 
     hitBrain(ray) {
       if (!cortex.visible) return false;
       cortex.getWorldPosition(hitSphere.center); hitSphere.radius = hitRadius * cortex.getWorldScale(hitScale).x;
-      return ray.ray.intersectsSphere(hitSphere);
+      return !!ray.ray.intersectSphere(hitSphere, hitPoint) && hitPoint.y >= hitSphere.center.y - hitSphere.radius * .25;
     },
     brainCentre(target) { return cortex.getWorldPosition(target); },
     pulse() { flash = 1; },

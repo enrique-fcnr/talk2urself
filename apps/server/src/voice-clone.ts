@@ -2,6 +2,8 @@
 // Clean takes of the user's own speech are kept in a private Supabase Storage bucket. After about 2.5, 10 and 20 minutes
 // of accepted speech the best takes (up to 60 s, one speaker) become a new clone; after the third the voice is frozen:
 // the raw takes are deleted and only the clip used for the final clone is kept.
+// English has its own clone, from the user's English speech only (after about 1, 5 and 10 minutes), so it carries
+// their real accent in English. Until it exists, English replies use the Portuguese clone. Neither touches the other.
 
 export type VoiceCloneConfig = { cartesiaKey: string; storageUrl: string; secret: string; userId: string };
 export function readVoiceCloneConfig(env: NodeJS.ProcessEnv = process.env): VoiceCloneConfig | null {
@@ -11,18 +13,26 @@ export function readVoiceCloneConfig(env: NodeJS.ProcessEnv = process.env): Voic
   return { cartesiaKey, storageUrl, secret, userId };
 }
 
-// Seconds of accepted speech that trigger the first clone and the two re-clones.
+// Seconds of accepted speech that trigger the first clone and the two re-clones, per language.
 export const cloneThresholds = [150, 600, 1200] as const;
+export const englishThresholds = [60, 300, 600] as const;
+export type CloneLanguage = 'pt' | 'en';
 export const maxClipSeconds = 60, minClipSeconds = 10;
 // Raw takes kept between clones: a little more than one clip, so later clones can still pick the best ones.
 const poolSeconds = 90;
 const sampleRate = 16_000;
 
 export type Take = { path: string; seconds: number; score: number };
-// ownVoice: the user chose "Minha voz". Only then is their speech collected and the clone used.
-export type CloneState = { ownVoice?: boolean; voiceId?: string; collectedSeconds: number; clones: number; frozen: boolean; takes: Take[]; updatedAt?: string };
-export const emptyState = (): CloneState => ({ collectedSeconds: 0, clones: 0, frozen: false, takes: [] });
-export type CloneStatus = { enabled: boolean; ownVoice: boolean; collecting: boolean; cloned: boolean; frozen: boolean; clones: number; collectedSeconds: number; nextAt: number | null };
+// One clone's progress: its voice, the speech collected so far, how many clones were made, and the takes kept.
+export type Track = { voiceId?: string; collectedSeconds: number; clones: number; frozen: boolean; takes: Take[] };
+// ownVoice: the user chose "Minha voz". Only then is their speech collected and the clones used.
+// The top-level track is Portuguese (as saved before English existed); english is the second one.
+export type CloneState = Track & { ownVoice?: boolean; english: Track; updatedAt?: string };
+const emptyTrack = (): Track => ({ collectedSeconds: 0, clones: 0, frozen: false, takes: [] });
+// "Minha voz" is on unless the user turned it off.
+export const emptyState = (): CloneState => ({ ...emptyTrack(), ownVoice: true, english: emptyTrack() });
+export type TrackStatus = { collecting: boolean; cloned: boolean; frozen: boolean; clones: number; collectedSeconds: number; nextAt: number | null };
+export type CloneStatus = { enabled: boolean; ownVoice: boolean } & TrackStatus & { english: TrackStatus };
 
 // --- WAV (16-bit mono PCM) ---------------------------------------------------------------------------------------------
 export function readWav(buffer: Buffer): { samples: Int16Array; rate: number } | null {
@@ -105,18 +115,22 @@ export function joinTakes(parts: Int16Array[], rate = sampleRate): Int16Array {
   parts.forEach((part, index) => { out.set(part, offset); offset += part.length + (index < parts.length - 1 ? gap : 0); });
   return out;
 }
+function trackStatus(track: Track, thresholds: readonly number[], enabled: boolean, own: boolean): TrackStatus {
+  return { collecting: enabled && own && !track.frozen, cloned: Boolean(track.voiceId), frozen: track.frozen, clones: track.clones,
+    collectedSeconds: Math.round(track.collectedSeconds), nextAt: track.frozen ? null : thresholds[track.clones] ?? null };
+}
 export function cloneStatus(state: CloneState, enabled: boolean): CloneStatus {
-  const nextAt = state.frozen ? null : cloneThresholds[state.clones] ?? null;
-  return { enabled, ownVoice: !!state.ownVoice, collecting: enabled && !!state.ownVoice && !state.frozen, cloned: Boolean(state.voiceId), frozen: state.frozen, clones: state.clones,
-    collectedSeconds: Math.round(state.collectedSeconds), nextAt };
+  const own = !!state.ownVoice;
+  return { enabled, ownVoice: own, ...trackStatus(state, cloneThresholds, enabled, own), english: trackStatus(state.english, englishThresholds, enabled, own) };
 }
 
 // --- Service ---------------------------------------------------------------------------------------------------------
 export interface VoiceCloner {
-  voiceId(): string | undefined;
+  // The voice for a reply in that language (English falls back to the Portuguese clone until its own exists).
+  voiceId(language?: CloneLanguage): string | undefined;
   status(): CloneStatus;
   ready(): Promise<void>;
-  addTake(wav: Buffer, signal: AbortSignal): Promise<{ accepted: boolean; cloned: boolean; status: CloneStatus }>;
+  addTake(wav: Buffer, signal: AbortSignal, language?: CloneLanguage): Promise<{ accepted: boolean; cloned: boolean; status: CloneStatus }>;
   reset(signal: AbortSignal): Promise<CloneStatus>;
   choose(ownVoice: boolean, signal: AbortSignal): Promise<CloneStatus>;
 }
@@ -166,12 +180,12 @@ export function createVoiceCloner(config: VoiceCloneConfig, fetcher: typeof fetc
     await response.body?.cancel();
     if (!response.ok && response.status !== 404) log('Clonagem de voz: não foi possível apagar a voz anterior na Cartesia.');
   }
-  async function clone(clip: Buffer, signal: AbortSignal): Promise<string> {
+  async function clone(clip: Buffer, signal: AbortSignal, language: CloneLanguage): Promise<string> {
     const form = new FormData();
     form.set('clip', new Blob([new Uint8Array(clip)], { type: 'audio/wav' }), 'minha-voz.wav');
-    form.set('name', 'Talk2urself — minha voz');
-    form.set('description', 'Clonada automaticamente das falas do usuário no Talk2urself.');
-    form.set('language', 'pt');
+    form.set('name', language === 'en' ? 'Talk2urself — minha voz (inglês)' : 'Talk2urself — minha voz');
+    form.set('description', language === 'en' ? 'Clonada automaticamente das falas em inglês do usuário no Talk2urself.' : 'Clonada automaticamente das falas do usuário no Talk2urself.');
+    form.set('language', language);
     const response = await check(await fetcher('https://api.cartesia.ai/voices/clone', { method: 'POST', headers: cartesiaHeaders, body: form, signal: timeout(signal, 60_000) }), 'clonar a voz');
     const body = await response.json() as { id?: unknown };
     if (typeof body.id !== 'string' || !body.id) throw new Error('Clonagem de voz: a Cartesia não devolveu a voz.');
@@ -185,44 +199,49 @@ export function createVoiceCloner(config: VoiceCloneConfig, fetcher: typeof fetc
         const saved = await download('state.json', AbortSignal.timeout(20_000));
         if (saved) {
           const parsed = JSON.parse(saved.toString('utf8')) as Partial<CloneState>;
-          state = { ...emptyState(), ...parsed, takes: Array.isArray(parsed.takes) ? parsed.takes.filter((take) =>
-            typeof take?.path === 'string' && typeof take.seconds === 'number' && typeof take.score === 'number') : [] };
+          const takes = (value: unknown) => Array.isArray(value) ? value.filter((take): take is Take =>
+            typeof take?.path === 'string' && typeof take.seconds === 'number' && typeof take.score === 'number') : [];
+          const english = (parsed.english ?? {}) as Partial<Track>;
+          state = { ...emptyState(), ...parsed, ownVoice: parsed.ownVoice !== false, takes: takes(parsed.takes), english: { ...emptyTrack(), ...english, takes: takes(english.takes) } };
         }
       } catch { loaded = undefined; log('Clonagem de voz: não foi possível ler o estado salvo; nova tentativa no próximo uso.'); throw new Error('Clonagem de voz: armazenamento indisponível.'); }
     })();
     return loaded;
   }
 
-  async function addTake(wav: Buffer, signal: AbortSignal) {
+  async function addTake(wav: Buffer, signal: AbortSignal, language: CloneLanguage = 'pt') {
     await load();
     return serial(async () => {
-      if (state.frozen || !state.ownVoice) return { accepted: false, cloned: false, status: cloneStatus(state, true) };
+      // Each language has its own track: takes, thresholds, clone and final clip.
+      const track: Track = language === 'en' ? state.english : state, thresholds = language === 'en' ? englishThresholds : cloneThresholds;
+      const prefix = language === 'en' ? 'takes/en/' : 'takes/', finalClip = language === 'en' ? 'final-en.wav' : 'final.wav';
+      if (track.frozen || !state.ownVoice) return { accepted: false, cloned: false, status: cloneStatus(state, true) };
       const parsed = readWav(wav);
       if (!parsed) return { accepted: false, cloned: false, status: cloneStatus(state, true) };
       const samples = resample(parsed.samples, parsed.rate), quality = takeQuality(samples, sampleRate);
       if (!quality.accepted) return { accepted: false, cloned: false, status: cloneStatus(state, true) };
-      const take: Take = { path: `takes/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.wav`, seconds: Math.round(quality.seconds * 100) / 100, score: quality.score };
+      const take: Take = { path: `${prefix}${Date.now()}-${Math.random().toString(36).slice(2, 8)}.wav`, seconds: Math.round(quality.seconds * 100) / 100, score: quality.score };
       await upload(take.path, writeWav(samples), 'audio/wav', signal);
-      state.takes.push(take); state.collectedSeconds += take.seconds;
+      track.takes.push(take); track.collectedSeconds += take.seconds;
       // Keep only the best takes between clones; the rest of the raw audio is deleted right away.
-      const kept = pickTakes(state.takes, poolSeconds), dropped = state.takes.filter((item) => !kept.includes(item));
-      state.takes = kept;
+      const kept = pickTakes(track.takes, poolSeconds), dropped = track.takes.filter((item) => !kept.includes(item));
+      track.takes = kept;
       await remove(dropped.map((item) => item.path), signal);
       let cloned = false;
-      const threshold = cloneThresholds[state.clones];
-      const clipTakes = pickTakes(state.takes);
-      if (threshold !== undefined && state.collectedSeconds >= threshold && clipTakes.reduce((size, item) => size + item.seconds, 0) >= minClipSeconds) {
+      const threshold = thresholds[track.clones];
+      const clipTakes = pickTakes(track.takes);
+      if (threshold !== undefined && track.collectedSeconds >= threshold && clipTakes.reduce((size, item) => size + item.seconds, 0) >= minClipSeconds) {
         const parts: Int16Array[] = [];
         for (const item of clipTakes) { const audio = await download(item.path, signal), read = audio && readWav(audio); if (read) parts.push(read.samples); }
         const clip = writeWav(joinTakes(parts));
-        const voiceId = await clone(clip, signal), previous = state.voiceId;
-        state.voiceId = voiceId; state.clones++; cloned = true;
+        const voiceId = await clone(clip, signal, language), previous = track.voiceId;
+        track.voiceId = voiceId; track.clones++; cloned = true;
         if (previous && previous !== voiceId) await deleteVoice(previous, signal);
-        if (state.clones >= cloneThresholds.length) {
+        if (track.clones >= thresholds.length) {
           // Frozen: keep only the clip behind the final voice, delete every raw take.
-          await upload('final.wav', clip, 'audio/wav', signal);
-          await remove(state.takes.map((item) => item.path), signal);
-          state.takes = []; state.frozen = true;
+          await upload(finalClip, clip, 'audio/wav', signal);
+          await remove(track.takes.map((item) => item.path), signal);
+          track.takes = []; track.frozen = true;
         }
       }
       await saveState(signal);
@@ -233,8 +252,8 @@ export function createVoiceCloner(config: VoiceCloneConfig, fetcher: typeof fetc
   async function reset(signal: AbortSignal) {
     await load();
     return serial(async () => {
-      if (state.voiceId) await deleteVoice(state.voiceId, signal);
-      await remove([...state.takes.map((item) => item.path), 'final.wav'], signal);
+      for (const track of [state, state.english]) if (track.voiceId) await deleteVoice(track.voiceId, signal);
+      await remove([...state.takes.map((item) => item.path), ...state.english.takes.map((item) => item.path), 'final.wav', 'final-en.wav'], signal);
       state = { ...emptyState(), ownVoice: state.ownVoice };
       await saveState(signal);
       return cloneStatus(state, true);
@@ -246,6 +265,7 @@ export function createVoiceCloner(config: VoiceCloneConfig, fetcher: typeof fetc
     return serial(async () => { state.ownVoice = ownVoice; await saveState(signal); return cloneStatus(state, true); });
   }
 
-  // The clone speaks only while the user keeps "Minha voz" chosen; otherwise Kelly's own voice.
-  return { voiceId: () => state.ownVoice ? state.voiceId : undefined, status: () => cloneStatus(state, true), ready: () => load().catch(() => undefined), addTake, reset, choose };
+  // The clones speak only while the user keeps "Minha voz" chosen; otherwise the original voice. English uses its own
+  // clone once it exists, the Portuguese one until then.
+  return { voiceId: (language: CloneLanguage = 'pt') => !state.ownVoice ? undefined : language === 'en' ? state.english.voiceId ?? state.voiceId : state.voiceId, status: () => cloneStatus(state, true), ready: () => load().catch(() => undefined), addTake, reset, choose };
 }

@@ -38,6 +38,10 @@ export interface MemoryService {
   saveLanguage?(sourceTurnId: string, context: MemoryContext, updates: MemoryUpdate[], signal: AbortSignal, diagnostic?: DiagnosticSink, rejectedCandidates?: string[]): Promise<{ applied: number; stale: boolean }>;
   languageContext?(sourceTurnId: string, signal: AbortSignal): Promise<LanguageContext>;
   load(query: string, signal: AbortSignal): Promise<MemoryContext>;
+  // The context without a query (profile, catalog, recent turns, summary, categories): it can load while the user's
+  // speech is still being transcribed. recall: the memories closest to what was said, for the brain to light up.
+  loadBase?(signal: AbortSignal): Promise<MemoryContext>;
+  recall?(query: string, signal: AbortSignal): Promise<StoredMemory[]>;
   save(id: string, user: string, assistant: string, context: MemoryContext, learning: Learning, signal: AbortSignal, diagnostic?: DiagnosticSink): Promise<void>;
   inspect(signal: AbortSignal): Promise<MemoryContext>;
   vectors(signal: AbortSignal): Promise<VectorSnapshot>;
@@ -45,6 +49,9 @@ export interface MemoryService {
   count?(signal: AbortSignal): Promise<number>;
   // The user interrupted the reply: keep only what was said before the cut in the saved turn.
   trimReply?(turnId: string, text: string, signal: AbortSignal): Promise<void>;
+  // The user picked up a sentence the clone cut short: that turn goes away (with what was learned from the fragment),
+  // and the whole sentence is answered and learned from as one.
+  forgetTurn?(turnId: string, signal: AbortSignal): Promise<void>;
 }
 export type MemoryConfig = { url: string; secret: string; userId: string; openaiKey: string };
 
@@ -247,6 +254,16 @@ export function createMemoryService(config: MemoryConfig, fetcher: typeof fetch 
       return context;
     },
     async inspect(signal) { return parseContext(await rpc('talk_load_context_v2', { p_user_id: config.userId, p_embedding: null }, signal)); },
+    async loadBase(signal) {
+      const [data, catalog] = await Promise.all([rpc('talk_load_context_v2', { p_user_id: config.userId, p_embedding: null }, signal), ensureCategories(signal)]);
+      const context = parseContext(data);
+      context.categories = catalog.map(({ embedding: _vector, ...item }) => item);
+      return context;
+    },
+    async recall(query, signal) {
+      const [vector] = await embeddings([query], signal);
+      return parseContext(await rpc('talk_load_context_v2', { p_user_id: config.userId, p_embedding: vector }, signal)).relevant;
+    },
     async languageContext(sourceTurnId, signal) {
       const data = await rpc('talk_load_language_candidates', { p_user_id: config.userId, p_source_turn_id: sourceTurnId }, signal);
       const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -286,6 +303,12 @@ export function createMemoryService(config: MemoryConfig, fetcher: typeof fetch 
         emitDiagnostic(report, { stage, outcome: signal.aborted ? 'cancelled' : 'failed', reason: 'service_error' });
         throw error;
       }
+    },
+    async forgetTurn(turnId, signal) {
+      const response = await fetcher(`${config.url}/rest/v1/talk_turns?id=eq.${encodeURIComponent(turnId)}&user_id=eq.${config.userId}`, {
+        method: 'DELETE', headers: { apikey: config.secret, Prefer: 'return=minimal' }, signal: AbortSignal.any([signal, AbortSignal.timeout(10_000)]) });
+      await response.body?.cancel();
+      if (!response.ok) throw new Error('Memória: não foi possível juntar a fala retomada.');
     },
     async trimReply(turnId, text, signal) {
       const response = await fetcher(`${config.url}/rest/v1/talk_turns?id=eq.${encodeURIComponent(turnId)}&user_id=eq.${config.userId}`, {

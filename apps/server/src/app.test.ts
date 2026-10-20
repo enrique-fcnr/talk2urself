@@ -137,7 +137,8 @@ test('voice cloning routes are inert without a cloner and pass WAV takes to it w
   assert.deepEqual((await plain.inject('/api/voice')).json(), { enabled: false });
   assert.equal((await plain.inject({ method: 'POST', url: '/api/voice/sample', headers: { 'content-type': 'audio/wav' }, payload: Buffer.from('RIFF') })).statusCode, 404);
   await plain.close();
-  const status = { enabled: true, ownVoice: true, collecting: true, cloned: false, frozen: false, clones: 0, collectedSeconds: 0, nextAt: 150 };
+  const track = { collecting: true, cloned: false, frozen: false, clones: 0, collectedSeconds: 0, nextAt: 150 };
+  const status = { enabled: true, ownVoice: true, ...track, english: { ...track, nextAt: 60 } };
   const received: number[] = [];
   const app = await createApp({ cloner: { voiceId: () => undefined, status: () => status, ready: async () => {},
     addTake: async (wav) => { received.push(wav.length); return { accepted: true, cloned: false, status }; },
@@ -150,4 +151,18 @@ test('voice cloning routes are inert without a cloner and pass WAV takes to it w
   assert.equal(foreign.statusCode, 403);
   assert.equal((await app.inject({ method: 'POST', url: '/api/voice/reset' })).statusCode, 200);
   await app.close();
+});
+
+test('o modelo de voz sai comprimido para quem aceita e em cache por uma semana', async (t) => {
+  const { mkdtempSync, mkdirSync, writeFileSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os'); const path = await import('node:path');
+  const root = mkdtempSync(path.join(tmpdir(), 'web-')); mkdirSync(path.join(root, 'vad'));
+  writeFileSync(path.join(root, 'index.html'), '<!doctype html>');
+  writeFileSync(path.join(root, 'vad', 'model.wasm'), 'raw'); writeFileSync(path.join(root, 'vad', 'model.wasm.br'), 'br');
+  const app = await createApp({ webRoot: root }); t.after(() => app.close());
+  const compressed = await app.inject({ url: '/vad/model.wasm', headers: { 'accept-encoding': 'gzip, br' } });
+  assert.equal(compressed.headers['content-encoding'], 'br'); assert.equal(compressed.body, 'br');
+  assert.equal(compressed.headers['content-type'], 'application/wasm'); assert.match(String(compressed.headers['cache-control']), /max-age=604800/);
+  const plain = await app.inject({ url: '/vad/model.wasm' });
+  assert.equal(plain.headers['content-encoding'], undefined); assert.equal(plain.body, 'raw');
 });

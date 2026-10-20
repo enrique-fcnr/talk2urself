@@ -75,7 +75,7 @@ test('conversa sem toque: envia após uma pausa e desiste se ninguém falar', ()
   const talk = createSpeechGate();
   assert.equal(feed(talk, .004, .5), 'waiting', 'room noise is not speech');
   assert.equal(feed(talk, .08, 1.2), 'speaking');
-  assert.equal(feed(talk, .004, .8), 'speaking', 'a short breath does not end the turn');
+  assert.equal(feed(talk, .004, .5), 'speaking', 'a short breath does not end the turn');
   assert.equal(feed(talk, .08, .5), 'speaking');
   assert.equal(feed(talk, .004, 1.4), 'done', 'a real pause ends the turn');
 

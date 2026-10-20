@@ -7,6 +7,9 @@ export const maxGestureCues = 2;
 const marks: Record<string, SpeechGesture> = { concorda: 'nod', ombros: 'shrug', inclina: 'tilt' };
 const markPattern = /\s*\[(\p{L}{2,20})\]\s*/gu;
 
+// [dormir]: the user said goodbye; the clone falls asleep once this reply has been heard (the mark is removed like any other).
+export const wantsSleep = (reply: string) => /\[dormir\]/iu.test(reply);
+
 // Unknown bracketed words such as [risos] are removed too, so the voice never reads them aloud.
 export function extractGestures(reply: string): { text: string; gestures: GestureCue[] } {
   let text = '', last = 0;

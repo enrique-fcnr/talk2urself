@@ -115,11 +115,23 @@ type ViewOptions = {
 };
 export function mountKelly(host: HTMLElement, options: ViewOptions) {
   const controller = new AbortController();
+  // Computers render above the screen's pixel density, up to 2.5x: supersampling smooths edges and the mirror-like
+  // highlights. Phones render near their own dense screen (up to 2.5x, never below 2x there) so the face stays sharp;
+  // multisampling is left out on them, since at that density it barely shows and costs the most. If frames run slow,
+  // the resolution steps down to that floor, and below it the clone is drawn at half the frame rate instead.
+  // Phones render at 2x their screen, with multisampling for clean edges (on the tile-based graphics chips of phones it
+  // costs little). ?quality=lite drops two of the four lights and the velvet sheen, to compare; ?perf shows the frame rate.
+  const query=new URLSearchParams(location.search);
+  const phone=matchMedia('(pointer: coarse)').matches || Math.min(innerWidth,innerHeight)<700, lite=phone && query.get('quality')==='lite';
   const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
-  // Render above the screen's pixel density, up to 2.5x: supersampling smooths edges and the mirror-like highlights.
-  // If the machine cannot keep ~45 fps, the draw loop steps it down instead of stuttering.
-  let pixelRatio=Math.min(2.5,Math.max(1,devicePixelRatio)*1.75), frameMs=16, sinceRatioChange=0;
-  const lowestRatio=Math.max(1,Math.min(devicePixelRatio,2)*.75);
+  let pixelRatio=phone ? Math.min(2,Math.max(1,devicePixelRatio)) : Math.min(2.5,Math.max(1,devicePixelRatio)*1.75), frameMs=16, sinceRatioChange=0;
+  const lowestRatio=phone ? Math.min(1.5,Math.max(1,devicePixelRatio)) : Math.max(1,Math.min(devicePixelRatio,2)*.75);
+  // The display's own frame interval (16.7 ms at 60 Hz; 33 ms when a phone saves battery): slowness is measured
+  // against it, so a screen capped at 30 fps is not mistaken for a slow machine.
+  let cadenceMs=16.7; const intervals: number[]=[];
+  const meter=query.has('perf') ? Object.assign(document.createElement('div'),{ style: 'position:fixed;left:8px;top:8px;z-index:99999;padding:4px 8px;border-radius:6px;background:#000a;color:#0f0;font:12px monospace;pointer-events:none' }) : null;
+  if (meter) document.body.append(meter);
+  let meterFrames=0, meterSince=0;
   renderer.setPixelRatio(pixelRatio); renderer.toneMapping = THREE.ACESFilmicToneMapping; renderer.toneMappingExposure = 1.25;
   renderer.localClippingEnabled = true; renderer.domElement.setAttribute('aria-hidden', 'true'); host.append(renderer.domElement);
   const scene = new THREE.Scene(), camera = new THREE.PerspectiveCamera(35, 1, .01, 100);
@@ -153,7 +165,8 @@ export function mountKelly(host: HTMLElement, options: ViewOptions) {
   environmentSource.dispose(); pmrem.dispose(); scene.environment=environment.texture;
   const hemisphere=new THREE.HemisphereLight(0x7287cf,0x02030b,.35); scene.add(hemisphere);
   const lights: { light: THREE.Light; power: number; color: number }[]=[];
-  for (const [color,x,y,z,power] of [[0xb8f5ff,-1.2,1.8,2.5,8],[0xffa6df,1.6,1.1,1.5,3],[0x406cff,0,2,-1,5],[0xe0eeff,-.8,-1,2,3]]) {
+  const lightSet=[[0xb8f5ff,-1.2,1.8,2.5,8],[0xffa6df,1.6,1.1,1.5,3],[0x406cff,0,2,-1,5],[0xe0eeff,-.8,-1,2,3]];
+  for (const [color,x,y,z,power] of lite ? [lightSet[0],lightSet[2]].map(([c,x,y,z,p])=>[c,x,y,z,p*1.25]) : lightSet) {
     const light=new THREE.PointLight(color,power); light.position.set(x,y,z); scene.add(light); lights.push({ light, power, color });
   }
   // 1024 px so the glowing eyes keep a crisp edge up close (same 12-14 px radii as the old 256 px map, scaled).
@@ -261,9 +274,9 @@ export function mountKelly(host: HTMLElement, options: ViewOptions) {
     scene.environment=look.envMapIntensity>0 ? environment.texture : null; hemisphere.intensity=.35*look.lights;
     for (const { light, power, color } of lights) { light.intensity=power*look.lights; light.color.set(look.lightTint ?? color); }
     lookGradient.edge.value=look.edge;
-    rimFire.strength.value=look.rim.strength; rimFire.power.value=look.rim.power; rimFire.colorA.value.set(look.rim.colorA);
+    rimFire.strength.value=look.rim.strength*(lite && look.sheen ? 1.3 : 1); rimFire.power.value=look.rim.power; rimFire.colorA.value.set(look.rim.colorA);
     rimFire.colorB.value.set(look.rim.colorB); rimFire.scale.value=look.rim.scale; rimFire.flicker.value=look.rim.flicker; rimFire.variation.value=look.rim.variation;
-    material.sheen=look.sheen; material.sheenColor.set(look.sheenColor); material.sheenRoughness=.55;
+    material.sheen=lite ? 0 : look.sheen; material.sheenColor.set(look.sheenColor); material.sheenRoughness=.55;
     lookGradient.low.value.set(look.gradient.low); lookGradient.high.value.set(look.gradient.high);
     lookGradient.from.value=look.gradient.from; lookGradient.to.value=look.gradient.to;
     lookGradient.glow.value=look.gradient.glow; lookGradient.tint.value=look.gradient.tint; lookGradient.eyeCut.value=look.gradient.eyeCut;
@@ -443,10 +456,18 @@ export function mountKelly(host: HTMLElement, options: ViewOptions) {
   function draw(time: number) {
     if (disposed || document.hidden) return;
     const elapsed=time-lastTime, dt=Math.min(elapsed/1000,.05); lastTime=time;
+    if (meter) { meterFrames++; meterSince+=elapsed; if (meterSince>500) { meter.textContent=`${Math.round(meterFrames*1000/meterSince)} fps · tela ${Math.round(1000/cadenceMs)} Hz · ${pixelRatio.toFixed(2)}x${lite ? ' · leve' : ''}`; meterFrames=0; meterSince=0; } }
     // Adaptive resolution: average the frame time and drop the supersampling a step when frames run slow.
     frameMs=frameMs*.95+Math.min(elapsed,100)*.05; sinceRatioChange+=dt;
-    if (frameMs>22 && sinceRatioChange>2 && pixelRatio>lowestRatio) {
-      pixelRatio=Math.max(lowestRatio,pixelRatio-.25); renderer.setPixelRatio(pixelRatio); sinceRatioChange=0; frameMs=16;
+    // The cadence is the display's refresh: a low percentile of the last 60 intervals (single frames jitter), snapped to
+    // the nearest common rate (120, 60 or 30 Hz), known within about a second.
+    if (elapsed>4 && elapsed<200) {
+      intervals.push(elapsed); if (intervals.length>60) intervals.shift();
+      const low=[...intervals].sort((a,b)=>a-b)[Math.floor(intervals.length*.2)];
+      cadenceMs=[1000/120,1000/60,1000/30].reduce((best,rate)=>Math.abs(rate-low)<Math.abs(best-low) ? rate : best);
+    }
+    if (intervals.length>=30 && frameMs>cadenceMs*1.5 && sinceRatioChange>1.5 && pixelRatio>lowestRatio) {
+      pixelRatio=Math.max(lowestRatio,pixelRatio-.25); renderer.setPixelRatio(pixelRatio); sinceRatioChange=0; frameMs=cadenceMs;
     }
     const playback=options.getPlayback();
     const playing=!!playback && !playback.audio.paused && !playback.audio.ended;
@@ -584,7 +605,7 @@ export function mountKelly(host: HTMLElement, options: ViewOptions) {
     resize(); options.onReady?.(); lastTime=performance.now(); if(!document.hidden)frame=requestAnimationFrame(draw);
   }).catch(()=>{if(!disposed)options.onError();});
   return () => {
-    disposed=true; controller.abort(); clearTimeout(memoryRetry); memorySocket?.close(); cancelAnimationFrame(frame); observer.disconnect(); document.removeEventListener('visibilitychange',visibility);
+    disposed=true; meter?.remove(); controller.abort(); clearTimeout(memoryRetry); memorySocket?.close(); cancelAnimationFrame(frame); observer.disconnect(); document.removeEventListener('visibilitychange',visibility);
     removeEventListener('pointerdown',userActive); removeEventListener('keydown',userActive);
     mixer?.stopAllAction(); controls?.dispose(); for(const geometry of geometries)geometry.dispose(); material.dispose(); crown?.dispose(); eyeMap.dispose(); environment.dispose();
     renderer.dispose(); renderer.forceContextLoss(); renderer.domElement.remove();

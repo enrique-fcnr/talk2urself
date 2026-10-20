@@ -164,8 +164,9 @@ h1 { font-size: clamp(23px, 2.6vw, 35px); line-height: 1.3; letter-spacing: -1.1
 .wordmark { transition: opacity .5s ease, visibility 0s linear 0s; }
 .app[data-leaving='true'] .header, .app[data-started='true'] .header { border-bottom-color: transparent; }
 .app[data-leaving='true'] .wordmark, .app[data-started='true'] .wordmark { opacity: 0; visibility: hidden; pointer-events: none; transition: opacity .5s ease, visibility 0s linear .5s; }
-.avatar:not(:disabled) { cursor: pointer; }
-.avatar[aria-disabled='true']:not([data-over-brain='true']) { cursor: default; }
+/* Only the brain is tappable; the rest of the clone is driven by voice. */
+.avatar { cursor: default; }
+.avatar[data-over-brain='true'] { cursor: pointer; }
 /* While recording, the light around her breathes so the user knows she is listening. */
 .app[data-recording='true'] .halo { animation: listening 1.6s ease-in-out infinite; }
 @keyframes listening { 50% { opacity: .55; transform: translateX(-50%) scale(1.04); } }
@@ -202,7 +203,8 @@ h1 { font-size: clamp(23px, 2.6vw, 35px); line-height: 1.3; letter-spacing: -1.1
 /* Live captions: one line at a time, centred in the gap between the top of the stage and Kelly's portal (its top is
    set from script). No box: words emerge one by one from a blur and dissolve the same way as the next line comes. */
 .captions { position: absolute; z-index: 6; top: 12%; left: 50%; width: min(820px, calc(100vw - 40px)); height: 1.6em; transform: translate(-50%, -50%); font-size: clamp(17px, 1.7vw, 23px); text-align: center; pointer-events: none; }
-.caption { position: absolute; inset: 0; margin: 0; line-height: 1.5; white-space: nowrap; color: var(--ink); letter-spacing: -.2px; font-weight: 400;
+/* The side fade (mask) also clips vertically, so the box reaches past the line: the hint's pulsing ring fits inside it. */
+.caption { position: absolute; inset: -18px 0; padding: 18px 0; margin: 0; line-height: 1.5; white-space: nowrap; color: var(--ink); letter-spacing: -.2px; font-weight: 400;
   -webkit-mask-image: linear-gradient(90deg, transparent, #000 6%, #000 94%, transparent); mask-image: linear-gradient(90deg, transparent, #000 6%, #000 94%, transparent); }
 .caption-word { display: inline-block; margin: 0 .14em; opacity: .88; animation: word-emerge .9s cubic-bezier(.16, .84, .3, 1) calc(var(--i) * 45ms) both; }
 .caption.leaving .caption-word { animation: word-dissolve .75s cubic-bezier(.5, 0, .75, .4) calc(var(--i) * 28ms) both; }
@@ -297,3 +299,16 @@ h1 { font-size: clamp(23px, 2.6vw, 35px); line-height: 1.3; letter-spacing: -1.1
 @media (max-width: 700px) { .settings-page { padding: 72px 12px 24px; } }
 @media (prefers-reduced-motion: reduce) { .settings-page, .settings-sheet { animation: none; } }
 .settings-page[data-theme='dark'] .settings-choice button[aria-checked='true'] { background: #2d2942; box-shadow: inset 0 0 0 1px #4a3f6b; }
+
+/* Phones: the caption words fade and drift without the blur, which is costly to animate on their graphics chips. */
+/* Without the blur the two lines would show on top of each other while they swap: the old one leaves quickly and
+   the new one starts as it goes. */
+@media (pointer: coarse) {
+  .caption-word, .caption-who, .caption-pulse { animation-name: word-emerge-light; }
+  .caption:not(.leaving) .caption-word { animation-delay: calc(.22s + var(--i) * 40ms); }
+  .caption.leaving .caption-word { animation: word-dissolve-light .26s ease-in both; }
+}
+@keyframes word-emerge-light { from { opacity: 0; transform: translateY(.35em); } }
+@keyframes word-dissolve-light { to { opacity: 0; transform: translate(var(--drift), -.45em); } }
+
+.settings-card p.settings-message { color: var(--accent); font-weight: 500; }

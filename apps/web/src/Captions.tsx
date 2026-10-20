@@ -24,8 +24,8 @@ export function lineAt(lines: string[], progress: number): number {
 }
 
 type Shown = { key: string; text: string; who: 'kelly' | 'you' | 'hint'; arrow?: boolean };
-// Live captions above Kelly: one line at a time, its words emerging from a blur and dissolving as the next line
-// arrives. Kelly's words follow her audio; after the user speaks, what she understood shows in a quieter tone.
+// Live captions above the clone: one line at a time, its words emerging from a blur and dissolving as the next line
+// arrives, following its audio. The user's own words are not shown.
 // Nothing stays on screen once a line has passed. place() gives the line's vertical centre, in pixels from the top
 // of the conversation area.
 // hint: a short guidance line ("Toque para falar") shown in the same place while nobody is talking.
@@ -50,8 +50,8 @@ export default function Captions({ text, transcript, speaking, thinking, playbac
       const playback = playbackRef.current, audio = playback?.audio, duration = audio?.duration;
       const played = audio && Number.isFinite(duration) && duration! > 0 ? Math.min(1, audio.currentTime / duration!) : 0;
       // A reply in segments: this audio covers characters from..to of the whole text.
-      const progress = playback?.from !== undefined && playback.to !== undefined && playback.total
-        ? (playback.from + played * (playback.to - playback.from)) / playback.total : played;
+      const progress = playback?.from !== undefined && playback.to !== undefined && text.length
+        ? Math.min(1, (playback.from + played * (playback.to - playback.from)) / text.length) : played;
       // Between segments there is no audio for a moment: keep the line being shown.
       if (!playback && current.current?.who === 'kelly') { frame = requestAnimationFrame(tick); return; }
       const index = lineAt(lines, progress);
@@ -61,18 +61,6 @@ export default function Captions({ text, transcript, speaking, thinking, playbac
     tick();
     return () => cancelAnimationFrame(frame);
   }, [speaking, text, playbackRef]);
-  // The user's words, while she thinks: a line every 1.8 s, the last one held until she answers.
-  useEffect(() => {
-    if (!thinking || !transcript) return;
-    const lines = captionLines(transcript, width());
-    let index = 0;
-    show({ key: `y:0:${lines[0]}`, text: lines[0], who: 'you' });
-    const timer = setInterval(() => {
-      if (index >= lines.length - 1) { clearInterval(timer); return; }
-      index++; show({ key: `y:${index}:${lines[index]}`, text: lines[index], who: 'you' });
-    }, 1800);
-    return () => clearInterval(timer);
-  }, [thinking, transcript]);
   // Between turns the line empties, or shows the hint when there is one.
   useEffect(() => { if (!speaking && !thinking) show(hint ? { key: `h:${hint}`, text: hint, who: 'hint', arrow: hintArrow } : null); }, [speaking, thinking, hint, hintArrow]);
   // Keep the line centred in its gap as the layout settles or the window changes.

@@ -23,11 +23,12 @@ test('abertura e resposta enviam tempos junto do mesmo áudio sem chamar a sínt
     speak:async()=>{throw Error('Síntese antiga não deve ser chamada');},speakTimed:async()=>{generations++;return {audio:wav(),phonemes};}})});
   const address=await app.listen({host:'127.0.0.1',port:0});const channel=new Channel(address);
   t.after(async()=>{await channel.close();await app.close();});await channel.opened;await channel.next();channel.command('start');
-  await channel.next();await channel.next();await channel.next();
-  const opening=await channel.next();assert.equal(opening.type,'audio-output');assert.deepEqual(opening.phonemes,phonemes);await channel.next();
-  channel.command('playback-ended');await channel.next();channel.audio();
-  let output:any;for(let i=0;i<7;i++){const event=await channel.next();if(event.type==='audio-output')output=event;}
-  assert.deepEqual(output?.phonemes,phonemes);await channel.next();assert.equal(generations,2);
+  // The audio streams first; the mouth cues follow with the end of the segment.
+  const until=async(match:(event:any)=>boolean)=>{for(;;){const event=await channel.next();if(!(event instanceof ArrayBuffer)&&match(event))return event;}};
+  const opening=await until(event=>event.type==='audio-done');assert.deepEqual(opening.phonemes,phonemes);
+  channel.command('playback-ended');await until(event=>event.state==='listening');channel.audio();
+  const output=await until(event=>event.type==='audio-done');
+  assert.deepEqual(output.phonemes,phonemes);assert.equal(generations,2);
 });
 
 test('repouso descarta áudio sincronizado e seus tempos quando a geração termina atrasada',async t=>{
@@ -199,6 +200,8 @@ test('áudio e próximo turno chegam enquanto a análise de linguagem continua e
   assert.equal(completed, false, 'Não precisa concluir a análise para enviar áudio.');
   channel.command('playback-ended'); await until(packet => packet.state === 'listening');
   channel.audio(); await until(packet => packet instanceof ArrayBuffer);
+  // The memory of the turn is written in the background, right after its voice starts.
+  await until(packet => packet.type === 'audio-done'); await delay(20);
   assert.equal(saves, 2); assert.equal(observed, 1); assert.equal(completed, false);
   release();
   await until(packet => packet.type === 'usage');
@@ -218,14 +221,15 @@ test('despertar fala primeiro, preserva contexto no turno real e não grava usu�
   }) });
   const address = await app.listen({ host: '127.0.0.1', port: 0 }); const channel = new Channel(address);
   t.after(async () => { await channel.close(); await app.close(); });
+  const until = async (match: (event: any) => boolean) => { for (;;) { const event = await channel.next(); if (!(event instanceof ArrayBuffer) && match(event)) return event; } };
   await channel.opened; await channel.next(); channel.command('start');
   assert.equal((await channel.next()).state, 'thinking');
-  assert.equal((await channel.next()).usage.turns, 0, 'A abertura conta TTS, sem simular um turno do usuário.');
-  assert.equal((await channel.next()).text, 'Qual é meu nome?');
-  assert.equal((await channel.next()).type, 'audio-output'); assert.ok(await channel.next() instanceof ArrayBuffer);
+  assert.equal((await until((event) => event.state === 'speaking')).text, 'Qual é meu nome?');
+  assert.equal((await until((event) => event.type === 'usage')).usage.turns, 0, 'A abertura conta TTS, sem simular um turno do usuário.');
+  await until((event) => event.type === 'audio-done');
   assert.equal(saves, 0);
-  channel.command('playback-ended'); assert.equal((await channel.next()).text, 'Qual é meu nome?');
-  channel.audio(); for (let i = 0; i < 9; i++) await channel.next();
+  channel.command('playback-ended'); assert.equal((await until((event) => event.type === 'state')).text, 'Qual é meu nome?');
+  channel.audio(); await until((event) => event.type === 'audio-done'); await delay(20);
   assert.deepEqual(answerHistory, [{ role: 'assistant', content: 'Qual é meu nome?' }, { role: 'user', content: 'Meu nome é Henrique.' }]);
   assert.equal(saves, 1);
   channel.command('reset'); assert.equal((await channel.next()).state, 'idle');
@@ -310,7 +314,9 @@ test('memória atravessa reconexão e é confirmada antes de enviar áudio', asy
   for (let turn = 0; turn < 2; turn++) {
     const channel = new Channel(address); channels.push(channel);
     await channel.opened; await channel.next(); channel.command('start'); await channel.next(); channel.audio();
-    for (let packet = 0; packet < 8; packet++) await channel.next();
+    // The memory is written in the background while the reply plays.
+    for (;;) { const packet = await channel.next(); if (!(packet instanceof ArrayBuffer) && packet.type === 'audio-done') break; }
+    await delay(20);
     assert.equal(calls.at(-1), 'save'); assert.equal(locked, false);
     await channel.close();
   }
@@ -336,7 +342,7 @@ test('memória atravessa reconexão e é confirmada antes de enviar áudio', asy
   assert.equal(denied.statusCode, 403);
 });
 
-test('falha de gravação da memória libera o turno e não afirma continuidade salva', async (t) => {
+test('falha de gravação da memória não segura a fala, avisa o erro e libera a memória', async (t) => {
   let released = false;
   const context: MemoryContext = { summary: '', profile: [], relevant: [], recent: [], version: 0, gaps: [] };
   const memory: MemoryService = { acquire: () => () => { released = true; }, load: async () => context, inspect: async () => context,
@@ -352,12 +358,14 @@ test('falha de gravação da memória libera o turno e não afirma continuidade 
   t.after(() => observer.close());
   t.after(async () => { await channel.close(); await app.close(); });
   await channel.opened; await channel.next(); channel.command('start'); await channel.next(); channel.audio();
-  for (let packet = 0; packet < 6; packet++) await channel.next();
-  assert.equal((await channel.next()).type, 'error'); assert.equal((await channel.next()).state, 'listening');
+  // The memory is written while the clone already speaks; its failure is reported, never a new state.
+  let error: any;
+  for (;;) { const event = await channel.next(); if (!(event instanceof ArrayBuffer) && event.type === 'error') { error = event; break; } }
+  assert.match(error.message, /^Memória:/);
   assert.equal(released, true);
   await delay(20);
   assert.deepEqual(notifications, ['{"type":"memory-sync"}'], 'Uma gravação recusada não avisa que houve atualização.');
-  assert.equal(channel.packets.some((packet) => !(packet instanceof ArrayBuffer) && packet.type === 'audio-output'), false);
+  assert.equal(channel.packets.some((packet) => !(packet instanceof ArrayBuffer) && packet.type === 'audio-output'), true);
 });
 
 test('voz percorre as três etapas, transmite WAV e espera a reprodução terminar', async (t) => {
@@ -377,16 +385,17 @@ test('voz percorre as três etapas, transmite WAV e espera a reprodução termin
   assert.equal((await channel.next()).usage.sttSeconds, 2);
   assert.equal((await channel.next()).type, 'transcript');
   assert.equal((await channel.next()).usage.inputTokens, 100);
-  assert.equal((await channel.next()).usage.turns, 1);
+  // The voice streams: speaking starts with the first piece of raw audio; usage and mouth cues follow.
   assert.equal((await channel.next()).state, 'speaking');
   assert.equal((await channel.next()).type, 'audio-output');
-  assert.deepEqual(Buffer.from(await channel.next()), wav());
+  assert.deepEqual(Buffer.from(await channel.next()), wav().subarray(44));
+  assert.equal((await channel.next()).usage.turns, 1);
+  assert.equal((await channel.next()).type, 'audio-done');
   channel.audio(); assert.equal((await channel.next()).type, 'error'); assert.equal((await channel.next()).type, 'error');
   assert.deepEqual(calls, ['stt', 'llm', 'tts']);
   channel.command('playback-ended'); assert.equal((await channel.next()).state, 'listening');
   channel.audio();
-  for (let i = 0; i < 7; i++) await channel.next();
-  await channel.next();
+  for (;;) { const packet = await channel.next(); if (!(packet instanceof ArrayBuffer) && packet.type === 'audio-done') break; }
   assert.equal(histories[1].length, 3, 'O segundo turno inclui a pergunta e a resposta anteriores.');
   assert.equal(records.length, 6);
   assert.equal(records.some((entry) => 'text' in entry || 'audio' in entry), false);
@@ -565,4 +574,105 @@ test('resposta sai frase por frase, só gera a próxima quando a anterior toca e
   channel.audio(); await until((event) => event.type === 'state' && event.state === 'speaking');
   const said = histories[1].find((message) => message.role === 'assistant')!.content;
   assert.ok(said.endsWith('…') && said.startsWith('Pô, entendi') && !said.includes('números'), said);
+});
+
+test('o anúncio da gravação aceita o tipo com detalhes do codec que os celulares enviam', () => {
+  assert.equal(parseAudioInput(JSON.stringify({ type: 'audio-input', mime: 'audio/mp4;codecs=mp4a.40.2', seconds: 3 }))?.mime, 'audio/mp4');
+  assert.equal(parseAudioInput(JSON.stringify({ type: 'audio-input', mime: 'audio/webm;codecs=opus', seconds: 3 }))?.mime, 'audio/webm;codecs=opus');
+  assert.equal(parseAudioInput(JSON.stringify({ type: 'audio-input', mime: 'video/mp4', seconds: 3 })), null);
+});
+
+test('uma despedida com [dormir] faz o clone adormecer depois de ser ouvida', async (t) => {
+  const app = await createApp({ voice: provider({
+    reply: async () => ({ text: 'Até amanhã, Enrique. [dormir]', inputTokens: 1, outputTokens: 1, cachedTokens: 0 }),
+    speakTimed: async (text) => { assert.doesNotMatch(text, /dormir/); return { audio: wav(), phonemes: [] }; },
+  }) });
+  const address = await app.listen({ host: '127.0.0.1', port: 0 }); const channel = new Channel(address);
+  t.after(async () => { await channel.close(); await app.close(); });
+  const until = async (match: (event: any) => boolean) => { for (;;) { const event = await channel.next(); if (match(event)) return event; } };
+  await channel.opened; await channel.next(); channel.command('start'); await channel.next(); channel.audio();
+  await until((event) => event.type === 'audio-output'); await channel.next();
+  channel.command('playback-ended');
+  assert.equal((await until((event) => event.type === 'state')).state, 'idle');
+});
+
+test('a fala começa com a primeira frase enquanto a IA ainda escreve o resto', async (t) => {
+  let finish!: () => void; const voiced: string[] = [];
+  const app = await createApp({ voice: provider({
+    reply: async (_messages, _signal, _context, _diagnostic, _language, onReply) => {
+      onReply?.('Boa pergunta, vamos por partes. Pri', false);
+      await new Promise<void>((resolve) => { finish = resolve; });
+      return { text: 'Boa pergunta, vamos por partes. Primeiro o objetivo. Depois o prazo.', inputTokens: 1, outputTokens: 1, cachedTokens: 0 };
+    },
+    speakTimed: async (text) => { voiced.push(text); return { audio: wav(), phonemes: [] }; },
+  }) });
+  const address = await app.listen({ host: '127.0.0.1', port: 0 }); const channel = new Channel(address);
+  t.after(async () => { await channel.close(); await app.close(); });
+  const until = async (match: (event: any) => boolean) => { for (;;) { const event = await channel.next(); if (match(event)) return event; } };
+  await channel.opened; await channel.next(); channel.command('listen'); assert.equal((await channel.next()).state, 'listening'); channel.audio();
+  const speaking = await until((event) => event.type === 'state' && event.state === 'speaking');
+  assert.equal(speaking.text, 'Boa pergunta, vamos por partes.', 'Fala antes de a IA terminar.');
+  assert.equal((await until((event) => event.type === 'audio-output')).last, false);
+  finish();
+  assert.equal((await until((event) => event.type === 'state')).text, 'Boa pergunta, vamos por partes. Primeiro o objetivo. Depois o prazo.');
+  channel.socket.send(JSON.stringify({ type: 'playing', segment: 0 }));
+  const second = await until((event) => event.type === 'audio-output');
+  assert.deepEqual([second.segment, second.last], [1, true]);
+  assert.deepEqual(voiced, ['Boa pergunta, vamos por partes.', 'Primeiro o objetivo. Depois o prazo.']);
+});
+
+test('fala que termina no meio espera a continuação e responde às duas partes juntas', async (t) => {
+  const heard = ['Eu tô pensando em mudar de emprego e', 'quero saber se é a hora certa.'];
+  const asked: string[] = [];
+  const app = await createApp({ voice: provider({
+    transcribe: async () => ({ text: heard.shift()!, seconds: 2 }),
+    reply: async (messages) => { asked.push(messages.at(-1)!.content); return { text: 'Vamos ver isso juntos.', inputTokens: 1, outputTokens: 1, cachedTokens: 0 }; },
+  }) });
+  const address = await app.listen({ host: '127.0.0.1', port: 0 }); const channel = new Channel(address);
+  t.after(async () => { await channel.close(); await app.close(); });
+  const until = async (match: (event: any) => boolean) => { for (;;) { const event = await channel.next(); if (!(event instanceof ArrayBuffer) && match(event)) return event; } };
+  await channel.opened; await channel.next(); channel.command('listen'); await until((event) => event.state === 'listening');
+  channel.audio(); await until((event) => event.state === 'thinking');
+  // Unfinished: back to listening without an answer; the user keeps talking and the rest arrives.
+  await until((event) => event.state === 'listening'); assert.deepEqual(asked, []);
+  channel.socket.send(JSON.stringify({ type: 'user-speaking' })); await delay(1800);
+  assert.deepEqual(asked, [], 'Waits while the user is talking.');
+  channel.audio(); await until((event) => event.state === 'speaking');
+  assert.deepEqual(asked, ['Eu tô pensando em mudar de emprego e quero saber se é a hora certa.']);
+});
+
+test('sem continuação, a fala incompleta é respondida depois da espera', async (t) => {
+  const asked: string[] = [];
+  const app = await createApp({ voice: provider({
+    transcribe: async () => ({ text: 'Eu queria falar sobre o meu trabalho e', seconds: 2 }),
+    reply: async (messages) => { asked.push(messages.at(-1)!.content); return { text: 'Pode falar.', inputTokens: 1, outputTokens: 1, cachedTokens: 0 }; },
+  }) });
+  const address = await app.listen({ host: '127.0.0.1', port: 0 }); const channel = new Channel(address);
+  t.after(async () => { await channel.close(); await app.close(); });
+  const until = async (match: (event: any) => boolean) => { for (;;) { const event = await channel.next(); if (!(event instanceof ArrayBuffer) && match(event)) return event; } };
+  await channel.opened; await channel.next(); channel.command('listen'); await until((event) => event.state === 'listening');
+  channel.audio(); await until((event) => event.state === 'thinking'); await until((event) => event.state === 'listening');
+  await until((event) => event.state === 'speaking');
+  assert.deepEqual(asked, ['Eu queria falar sobre o meu trabalho e']);
+});
+
+test('cortar o clone na primeira frase faz a nova fala continuar a anterior, sem o turno precipitado', async (t) => {
+  const heard = ['Eu tô pensando em mudar de emprego.', 'Mas só depois do fim do ano.'];
+  const histories: Message[][] = [];
+  const app = await createApp({ voice: provider({
+    transcribe: async () => ({ text: heard.shift()!, seconds: 2 }),
+    reply: async (messages) => { histories.push(messages); return { text: 'Entendi o que você quer fazer agora. Vamos pensar com calma no prazo e no dinheiro.', inputTokens: 1, outputTokens: 1, cachedTokens: 0 }; },
+  }) });
+  const address = await app.listen({ host: '127.0.0.1', port: 0 }); const channel = new Channel(address);
+  t.after(async () => { await channel.close(); await app.close(); });
+  const until = async (match: (event: any) => boolean) => { for (;;) { const event = await channel.next(); if (!(event instanceof ArrayBuffer) && match(event)) return event; } };
+  await channel.opened; await channel.next(); channel.command('listen'); await until((event) => event.state === 'listening');
+  channel.audio(); await until((event) => event.type === 'audio-output');
+  // Cut a few words into the first sentence.
+  channel.socket.send(JSON.stringify({ type: 'interrupt', heard: 8 }));
+  await until((event) => event.state === 'listening');
+  channel.audio(); await until((event) => event.state === 'speaking');
+  const second = histories[1];
+  assert.equal(second.at(-1)!.content, 'Eu tô pensando em mudar de emprego. Mas só depois do fim do ano.');
+  assert.equal(second.some((message) => message.role === 'assistant'), false, 'The early answer is dropped.');
 });

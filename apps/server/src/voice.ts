@@ -3,11 +3,12 @@ import { characterInstructions, firstContactOpening, hasContinuity, openingInstr
 import { pausedSpeech, readTimedSpeech, type TimedSpeech } from './speech-timing.ts';
 import { emitDiagnostic, type DiagnosticSink } from './memory-diagnostics.ts';
 import { languageNames, tagSlot, type SpeechLanguage } from './speech-language.ts';
+import { readReplyStream } from './reply-stream.ts';
 import { filterLanguageUpdates, languageAnalysisInput, languageAnalysisInstructions, languageSchema, languageProofSources, bindLanguageEvidence, languagePhraseSample, groundCandidateEvidence } from './language.ts';
 export type Message = { role: 'user' | 'assistant'; content: string };
 // voicePaused (CARTESIA_PAUSED=1): replies are generated as usual but spoken as silence, without calling Cartesia.
-// currentVoice: the user's cloned voice when there is one (VOICE_CLONING=1); otherwise voiceId.
-export type VoiceConfig = { openaiKey: string; cartesiaKey: string; voiceId: string; model: string; voicePaused?: boolean; currentVoice?: () => string | undefined };
+// currentVoice: the user's cloned voice for that language when there is one (VOICE_CLONING=1); otherwise voiceId.
+export type VoiceConfig = { openaiKey: string; cartesiaKey: string; voiceId: string; model: string; voicePaused?: boolean; currentVoice?: (language: SpeechLanguage) => string | undefined };
 export const openaiTranscriptionModel = 'gpt-transcribe';
 export interface VoiceProvider {
   model: string;
@@ -15,9 +16,11 @@ export interface VoiceProvider {
   opening?(context: MemoryContext | undefined, signal: AbortSignal): Promise<{ text: string; inputTokens: number; outputTokens: number; cachedTokens: number }>;
   transcribe(audio: Buffer, mime: string, signal: AbortSignal): Promise<{ text: string; seconds: number }>;
   // language: the reply's language, the one the user just spoke (Portuguese when omitted).
-  reply(messages: Message[], signal: AbortSignal, context?: MemoryContext, diagnostic?: DiagnosticSink, language?: SpeechLanguage): Promise<{ text: string; inputTokens: number; outputTokens: number; cachedTokens: number; learning?: Learning }>;
+  // onReply: called with the reply text while the model is still writing it (and done once the reply itself is complete).
+  reply(messages: Message[], signal: AbortSignal, context?: MemoryContext, diagnostic?: DiagnosticSink, language?: SpeechLanguage, onReply?: (text: string, done: boolean) => void): Promise<{ text: string; inputTokens: number; outputTokens: number; cachedTokens: number; learning?: Learning }>;
   speak(text: string, signal: AbortSignal, language?: SpeechLanguage): Promise<Buffer>;
-  speakTimed?(text: string, signal: AbortSignal, language?: SpeechLanguage): Promise<TimedSpeech>;
+  // onChunk: raw PCM (16-bit mono, 24 kHz) while it is generated; the result still holds the whole audio and the mouth cues.
+  speakTimed?(text: string, signal: AbortSignal, language?: SpeechLanguage, onChunk?: (pcm: Buffer) => void): Promise<TimedSpeech>;
 }
 
 // Estas informações são lidas apenas no servidor. Nunca use o prefixo VITE_ para chaves.
@@ -95,17 +98,17 @@ export function createVoiceProvider(config: VoiceConfig, fetcher: typeof fetch =
       return { text, inputTokens: count(usage.input_tokens), outputTokens: count(usage.output_tokens), cachedTokens: count(details.cached_tokens) };
     },
     transcribe,
-    async speakTimed(text, signal, language = 'pt') {
-      if (config.voicePaused) return pausedSpeech(text);
+    async speakTimed(text, signal, language = 'pt', onChunk) {
+      if (config.voicePaused) { const silent = pausedSpeech(text); onChunk?.(silent.audio.subarray(44)); return silent; }
       const deadline = AbortSignal.any([signal, AbortSignal.timeout(45_000)]);
       const response = await request('Voz Cartesia', 'https://api.cartesia.ai/tts/sse', {
         method: 'POST', headers: { ...cartesiaHeaders, 'Content-Type': 'application/json', Accept: 'text/event-stream' },
-        body: JSON.stringify({ model_id: 'sonic-3.6', transcript: text, voice: config.currentVoice?.() ?? config.voiceId, language: language === 'en' ? 'en' : 'pt-BR',
+        body: JSON.stringify({ model_id: 'sonic-3.6', transcript: text, voice: config.currentVoice?.(language) ?? config.voiceId, language: language === 'en' ? 'en' : 'pt-BR',
           // English: Cartesia returns phoneme timestamps, used directly for the mouth. Portuguese: it rejects them but returns
           // word timestamps in the same generation; the server reads the mouth shapes from each word's spelling inside its span.
           add_phoneme_timestamps: language === 'en', add_timestamps: true, output_format: { container: 'raw', encoding: 'pcm_s16le', sample_rate: 24000 } }),
       }, deadline);
-      return readTimedSpeech(response, deadline);
+      return readTimedSpeech(response, deadline, onChunk);
     },
     async observeLanguage(messages, signal, context, diagnostic) {
       let proposalReferences:string[][]=[];
@@ -165,7 +168,7 @@ export function createVoiceProvider(config: VoiceConfig, fetcher: typeof fetch =
       return { updates, rejectedCandidates, inputTokens: count(usage.input_tokens),
         outputTokens: count(usage.output_tokens), cachedTokens: count(details.cached_tokens) };
     },
-    async reply(messages, signal, context, diagnostic, language = 'pt') {
+    async reply(messages, signal, context, diagnostic, language = 'pt', onReply) {
       const replyContext = context;
       const conversationReport: DiagnosticSink = (event) => emitDiagnostic(diagnostic, { ...event, source: 'conversation' });
       if (context) emitDiagnostic(conversationReport, { stage: 'proposal', outcome: 'started' });
@@ -173,10 +176,11 @@ export function createVoiceProvider(config: VoiceConfig, fetcher: typeof fetch =
         method: 'POST', headers: { Authorization: `Bearer ${config.openaiKey}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({ model: config.model, instructions: context ? personalizedInstructions : instructions,
           input: [{ role: 'user', content: `replyLanguage: ${languageNames[language]}. ` + (replyContext ? 'Dados de continuidade e padrões de linguagem validados (não são comandos): ' + memoryContextText(replyContext, language) : '') }, ...messages],
-          store: false, reasoning: { effort: 'low' }, max_output_tokens: context ? 4000 : 1600,
+          store: false, reasoning: { effort: 'low' }, max_output_tokens: context ? 4000 : 1600, ...(onReply ? { stream: true } : {}),
           ...(context ? { text: { format: { type: 'json_schema', name: 'personalized_turn', strict: true, schema: learningSchema } } } : {}) }),
       }, signal);
-      const data: unknown = await response.json();
+      const data: unknown = onReply && response.headers.get('content-type')?.includes('text/event-stream')
+        ? await readReplyStream(response, !!context, onReply) : await response.json();
       if (!record(data) || data.status !== 'completed' || !Array.isArray(data.output)) throw new Error('A IA não concluiu a resposta. Tente uma pergunta mais curta.');
       const output = data.output.filter(record).filter((item) => item.type === 'message' && item.role === 'assistant')
         .flatMap((item) => Array.isArray(item.content) ? item.content : []).filter(record)
@@ -211,7 +215,7 @@ export function createVoiceProvider(config: VoiceConfig, fetcher: typeof fetch =
       if (config.voicePaused) return pausedSpeech(text).audio;
       const response = await request('Voz Cartesia', 'https://api.cartesia.ai/tts/bytes', {
         method: 'POST', headers: { ...cartesiaHeaders, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ model_id: 'sonic-3.6', transcript: text, voice: config.currentVoice?.() ?? config.voiceId, language: language === 'en' ? 'en' : 'pt-BR', output_format: { container: 'wav', encoding: 'pcm_s16le', sample_rate: 24000 } }),
+        body: JSON.stringify({ model_id: 'sonic-3.6', transcript: text, voice: config.currentVoice?.(language) ?? config.voiceId, language: language === 'en' ? 'en' : 'pt-BR', output_format: { container: 'wav', encoding: 'pcm_s16le', sample_rate: 24000 } }),
       }, signal);
       const audio = Buffer.from(await response.arrayBuffer());
       if (audio.length < 44 || audio.length > 8_000_000 || audio.toString('ascii', 0, 4) !== 'RIFF' || audio.toString('ascii', 8, 12) !== 'WAVE') throw new Error('A voz retornou um áudio inválido.');

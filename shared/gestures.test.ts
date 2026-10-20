@@ -24,3 +24,10 @@ test('o protocolo aceita só gestos conhecidos dentro da fala', () => {
   assert.equal(event([{ gesture: 'nod', at: 2 }]), null);
   assert.equal(parseGestureCues([{ gesture: 'nod', at: 0 }, { gesture: 'nod', at: 0.5 }, { gesture: 'nod', at: 1 }]), null);
 });
+
+test('[dormir] marca a despedida e não é lida em voz alta', async () => {
+  const { wantsSleep } = await import('./gestures.ts');
+  assert.equal(wantsSleep('Até amanhã, Enrique. [dormir]'), true);
+  assert.equal(wantsSleep('Durma bem hoje, viu?'), false);
+  assert.equal(extractGestures('Até amanhã. [dormir]').text, 'Até amanhã.');
+});

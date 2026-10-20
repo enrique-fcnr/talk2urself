@@ -40,14 +40,14 @@ test('pickTakes keeps the best takes within the limit, in spoken order', () => {
 });
 
 function fakeServices() {
-  const files = new Map<string, Buffer>(), clones: string[] = [], deletedVoices: string[] = [];
+  const files = new Map<string, Buffer>(), clones: string[] = [], deletedVoices: string[] = [], cloneLanguages: string[] = [];
   let cloneCount = 0;
   const fetcher = (async (input: string | URL | Request, init: RequestInit = {}) => {
     const url = String(input), method = init.method ?? 'GET';
     if (url.endsWith('/storage/v1/bucket')) return new Response('{}', { status: 409 });
     if (url === 'https://api.cartesia.ai/voices/clone') {
       const form = init.body as FormData;
-      assert.equal(form.get('language'), 'pt');
+      cloneLanguages.push(String(form.get('language')));
       clones.push(String((form.get('clip') as Blob).size));
       return Response.json({ id: `voice-${++cloneCount}` });
     }
@@ -61,7 +61,7 @@ function fakeServices() {
     }
     throw new Error(`unexpected ${method} ${url}`);
   }) as typeof fetch;
-  return { files, clones, deletedVoices, fetcher };
+  return { files, clones, deletedVoices, cloneLanguages, fetcher };
 }
 
 test('clones at the thresholds, re-clones twice, then freezes keeping only the final clip', async () => {
@@ -69,7 +69,9 @@ test('clones at the thresholds, re-clones twice, then freezes keeping only the f
   const cloner = createVoiceCloner({ cartesiaKey: 'k', storageUrl: 'https://x.supabase.co', secret: 's', userId: 'user' }, services.fetcher, () => {});
   const take = writeWav(speech(20));
   assert.equal(cloner.voiceId(), undefined);
-  // Nothing is collected until the user picks "Minha voz".
+  // "Minha voz" is on by default; with it turned off nothing is collected.
+  assert.equal(cloner.status().ownVoice, true);
+  await cloner.choose(false, AbortSignal.timeout(5000));
   assert.equal((await cloner.addTake(take, AbortSignal.timeout(5000))).accepted, false);
   await cloner.choose(true, AbortSignal.timeout(5000));
   let clonedAt: number[] = [];
@@ -107,4 +109,28 @@ test('rejected takes are not stored or counted', async () => {
   assert.equal(result.accepted, false);
   assert.equal(result.status.collectedSeconds, 0);
   assert.deepEqual([...services.files.keys()], ['user/state.json']);
+});
+
+test('inglês tem o próprio clone: nasce das falas em inglês e não mexe no português', async () => {
+  const services = fakeServices();
+  const cloner = createVoiceCloner({ cartesiaKey: 'k', storageUrl: 'https://x.supabase.co', secret: 's', userId: 'user' }, services.fetcher, () => {});
+  await cloner.choose(true, AbortSignal.timeout(5000));
+  const take = writeWav(speech(20));
+  // Portuguese first: its clone is made, and English replies borrow it until English has its own.
+  for (let i = 0; i < 8; i++) await cloner.addTake(take, AbortSignal.timeout(5000), 'pt');
+  assert.equal(cloner.voiceId('pt'), 'voice-1');
+  assert.equal(cloner.voiceId('en'), 'voice-1');
+  // About a minute of English makes the English clone; the Portuguese one stays as it was.
+  let status;
+  for (let i = 0; i < 3; i++) status = (await cloner.addTake(take, AbortSignal.timeout(5000), 'en')).status;
+  assert.equal(cloner.voiceId('en'), 'voice-2');
+  assert.equal(cloner.voiceId('pt'), 'voice-1');
+  assert.equal(status!.english.cloned, true); assert.equal(status!.english.nextAt, 300);
+  assert.equal(status!.clones, 1, 'English takes do not count toward the Portuguese clone.');
+  assert.ok([...services.files.keys()].some((path) => path.startsWith('user/takes/en/')));
+  // Both clones go with a reset.
+  await cloner.reset(AbortSignal.timeout(5000));
+  assert.deepEqual(services.cloneLanguages, ['pt', 'en']);
+  assert.deepEqual(services.deletedVoices, ['voice-1', 'voice-2']);
+  assert.equal(cloner.voiceId('en'), undefined);
 });

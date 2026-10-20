@@ -7,6 +7,20 @@
       "runtimeArgs": ["run", "dev"],
       "port": 5173,
       "url": "http://127.0.0.1:5173"
+    },
+    {
+      "name": "talk2urself-lan",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev:lan"],
+      "port": 5173,
+      "url": "https://127.0.0.1:5173"
+    },
+    {
+      "name": "talk2urself-lan-preview",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "preview:lan"],
+      "port": 5173,
+      "url": "https://127.0.0.1:5173"
     }
   ]
 }

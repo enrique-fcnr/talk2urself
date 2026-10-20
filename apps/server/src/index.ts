@@ -26,6 +26,10 @@ const app = await createApp({
   memory: memoryConfig ? createMemoryService(memoryConfig, fetch, logUsage) : undefined,
   cloner,
   onUsage: logUsage,
+  // WS_DEBUG=1 (set by npm run dev): a log of the conversation protocol, to diagnose turn-taking.
+  onDebug: process.env.WS_DEBUG === '1' ? (record) => {
+    try { mkdirSync('.local', { recursive: true }); appendFileSync('.local/ws-debug.jsonl', JSON.stringify({ at: new Date().toISOString(), ...record }) + '\n'); } catch { /* best effort */ }
+  } : undefined,
   onMemoryDiagnostic: (record: MemoryDiagnosticRecord) => {
     try {
       mkdirSync('.local', { recursive: true });

@@ -7,7 +7,8 @@ export type SpeechSegment = { text: string; from: number; to: number };
 // A short first segment starts the voice sooner; later ones are longer so the voice keeps its flow.
 const firstMin = 18, firstMax = 140, laterMin = 70, laterMax = 260;
 
-export function splitSpeech(text: string): SpeechSegment[] {
+// continuing: the text follows a first sentence already spoken, so every segment uses the longer size.
+export function splitSpeech(text: string, continuing = false): SpeechSegment[] {
   // Sentences end at . ! ? … (with closing quotes or brackets), followed by space or the end.
   const sentences: SpeechSegment[] = [];
   const pattern = /[^.!?…]*(?:[.!?…]+["'”’)\]]*(?=\s|$)|$)/gu;
@@ -18,7 +19,7 @@ export function splitSpeech(text: string): SpeechSegment[] {
   }
   const segments: SpeechSegment[] = [];
   for (const sentence of sentences) {
-    const last = segments.at(-1), first = segments.length === 1;
+    const last = segments.at(-1), first = segments.length === 1 && !continuing;
     const min = first ? firstMin : laterMin, max = first ? firstMax : laterMax;
     // Join a sentence to the previous segment while that one is still too short and the result not too long.
     if (last && last.to - last.from < min && sentence.to - last.from <= max) segments[segments.length - 1] = { text: text.slice(last.from, sentence.to), from: last.from, to: sentence.to };

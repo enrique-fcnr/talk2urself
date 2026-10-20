@@ -47,7 +47,8 @@ function amplitudeCues(pcm: Buffer): PhonemeCue[] {
   }
   return result;
 }
-export async function readTimedSpeech(response: Response, signal: AbortSignal): Promise<TimedSpeech> {
+// onChunk: each piece of raw PCM (16-bit mono, 24 kHz) as soon as it arrives, so playback can start before the end.
+export async function readTimedSpeech(response: Response, signal: AbortSignal, onChunk?: (pcm: Buffer) => void): Promise<TimedSpeech> {
   if (!response.body) throw new Error('A voz retornou um áudio inválido.');
   const reader = response.body.getReader(), decoder = new TextDecoder();
   let pending = '', done = false, bytes = 0, received = 0;
@@ -65,7 +66,7 @@ export async function readTimedSpeech(response: Response, signal: AbortSignal): 
       if (typeof value.data !== 'string' || !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(value.data)) throw new Error('A voz retornou um áudio inválido.');
       const chunk = Buffer.from(value.data, 'base64'); bytes += chunk.length;
       if (bytes + 44 > maxBytes) throw new Error('A voz excedeu o limite de áudio.');
-      chunks.push(chunk);
+      chunks.push(chunk); onChunk?.(chunk);
     } else if (value.type === 'phoneme_timestamps') {
       const timing = value.phoneme_timestamps;
       if (!record(timing) || !Array.isArray(timing.phonemes) || !Array.isArray(timing.start) || !Array.isArray(timing.end) ||

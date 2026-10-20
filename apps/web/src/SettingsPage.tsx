@@ -1,15 +1,17 @@
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { voiceStatus, type VoiceCloneStatus } from './voice-sample';
+import { englishStatus, voiceStatus, type VoiceCloneStatus } from './voice-sample';
 
 // The gear: the profile and the one choice about the clone, whose voice it uses. Nothing else is configurable.
-type Props = { theme: 'light' | 'dark'; voiceClone: VoiceCloneStatus | null; chooseVoice(own: boolean): Promise<void>; redoVoice(): Promise<void>; notify(message: string): void; onClose(): void };
+type Props = { theme: 'light' | 'dark'; voiceClone: VoiceCloneStatus | null; chooseVoice(own: boolean): Promise<void>; redoVoice(): Promise<void>; onClose(): void };
 
 const later = <span className="settings-soon">Em breve</span>;
 
-export default function SettingsPage({ theme, voiceClone, chooseVoice, redoVoice, notify, onClose }: Props) {
+export default function SettingsPage({ theme, voiceClone, chooseVoice, redoVoice, onClose }: Props) {
   const [name, setName] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  // Shown inside the page: the app's own notices sit behind it.
+  const [message, setMessage] = useState('');
   const closeButton = useRef<HTMLButtonElement>(null);
   useEffect(() => {
     closeButton.current?.focus();
@@ -32,11 +34,12 @@ export default function SettingsPage({ theme, voiceClone, chooseVoice, redoVoice
   async function pick(choice: boolean) {
     if (!voiceClone || choice === own || saving) return;
     setSaving(true);
-    try { await chooseVoice(choice); } catch (error) { notify(error instanceof Error ? error.message : 'Não foi possível trocar a voz.'); } finally { setSaving(false); }
+    setMessage('');
+    try { await chooseVoice(choice); } catch (error) { setMessage(error instanceof Error ? error.message : 'Não foi possível trocar a voz.'); } finally { setSaving(false); }
   }
   async function redo() {
     if (!confirm('Refazer sua voz? A voz atual e as amostras guardadas serão apagadas, e seu clone volta a aprender sua voz do zero.')) return;
-    try { await redoVoice(); notify('Pronto: seu clone vai reaprender sua voz enquanto vocês conversam.'); } catch (error) { notify(error instanceof Error ? error.message : 'Não foi possível refazer a voz.'); }
+    try { await redoVoice(); setMessage('Pronto: seu clone vai reaprender sua voz enquanto vocês conversam.'); } catch (error) { setMessage(error instanceof Error ? error.message : 'Não foi possível refazer a voz.'); }
   }
   const initial = (name ?? 'Você').trim().charAt(0).toUpperCase();
 
@@ -63,6 +66,8 @@ export default function SettingsPage({ theme, voiceClone, chooseVoice, redoVoice
         </div>
         <p>{!voiceClone ? 'Seu clone vai poder falar com a sua voz, aprendida das suas falas.'
           : own ? voiceStatus(voiceClone) : 'Escolha "Minha voz" para seu clone aprender sua voz enquanto vocês conversam.'}</p>
+        {voiceClone && own && englishStatus(voiceClone) ? <p>{englishStatus(voiceClone)}</p> : null}
+        {message ? <p className="settings-message" role="status">{message}</p> : null}
         {voiceClone && own && voiceClone.cloned ? <button className="settings-link" onClick={() => void redo()}>Refazer minha voz</button> : null}
       </section>
 
