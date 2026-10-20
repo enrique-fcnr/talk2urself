@@ -7,8 +7,9 @@ import { readReplyStream } from './reply-stream.ts';
 import { filterLanguageUpdates, languageAnalysisInput, languageAnalysisInstructions, languageSchema, languageProofSources, bindLanguageEvidence, languagePhraseSample, groundCandidateEvidence } from './language.ts';
 export type Message = { role: 'user' | 'assistant'; content: string };
 // voicePaused (CARTESIA_PAUSED=1): replies are generated as usual but spoken as silence, without calling Cartesia.
-// currentVoice: the user's cloned voice for that language when there is one (VOICE_CLONING=1); otherwise voiceId.
-export type VoiceConfig = { openaiKey: string; cartesiaKey: string; voiceId: string; model: string; voicePaused?: boolean; currentVoice?: (language: SpeechLanguage) => string | undefined };
+// voiceId / englishVoiceId: the default voice for Portuguese and for English (English falls back to voiceId).
+// currentVoice: the user's cloned voice for that language when there is one (VOICE_CLONING=1); otherwise the default.
+export type VoiceConfig = { openaiKey: string; cartesiaKey: string; voiceId: string; englishVoiceId?: string; model: string; voicePaused?: boolean; currentVoice?: (language: SpeechLanguage) => string | undefined };
 export const openaiTranscriptionModel = 'gpt-transcribe';
 export interface VoiceProvider {
   model: string;
@@ -27,7 +28,7 @@ export interface VoiceProvider {
 export function readVoiceConfig(env: NodeJS.ProcessEnv = process.env): VoiceConfig | null {
   const { OPENAI_API_KEY: openaiKey, CARTESIA_API_KEY: cartesiaKey, CARTESIA_VOICE_ID: voiceId } = env;
   if (!openaiKey?.trim() || !cartesiaKey?.trim() || !voiceId?.trim()) return null;
-  return { openaiKey: openaiKey.trim(), cartesiaKey: cartesiaKey.trim(), voiceId: voiceId.trim(), model: env.OPENAI_MODEL?.trim() || 'gpt-6-luna',
+  return { openaiKey: openaiKey.trim(), cartesiaKey: cartesiaKey.trim(), voiceId: voiceId.trim(), englishVoiceId: env.CARTESIA_VOICE_ID_EN?.trim() || undefined, model: env.OPENAI_MODEL?.trim() || 'gpt-6-luna',
     voicePaused: env.CARTESIA_PAUSED?.trim() === '1' };
 }
 
@@ -47,6 +48,7 @@ function count(value: unknown): number { return typeof value === 'number' && Num
 
 export function createVoiceProvider(config: VoiceConfig, fetcher: typeof fetch = fetch): VoiceProvider {
   const cartesiaHeaders = { Authorization: `Bearer ${config.cartesiaKey}`, 'Cartesia-Version': '2026-08-14' };
+  const defaultVoice = (language: SpeechLanguage) => language === 'en' ? config.englishVoiceId ?? config.voiceId : config.voiceId;
   async function request(service: string, url: string, options: RequestInit, signal: AbortSignal) {
     const response = await fetcher(url, { ...options, signal: AbortSignal.any([signal, AbortSignal.timeout(45_000)]) });
     if (!response.ok) {
@@ -103,7 +105,7 @@ export function createVoiceProvider(config: VoiceConfig, fetcher: typeof fetch =
       const deadline = AbortSignal.any([signal, AbortSignal.timeout(45_000)]);
       const response = await request('Voz Cartesia', 'https://api.cartesia.ai/tts/sse', {
         method: 'POST', headers: { ...cartesiaHeaders, 'Content-Type': 'application/json', Accept: 'text/event-stream' },
-        body: JSON.stringify({ model_id: 'sonic-3.6', transcript: text, voice: config.currentVoice?.(language) ?? config.voiceId, language: language === 'en' ? 'en' : 'pt-BR',
+        body: JSON.stringify({ model_id: 'sonic-3.6', transcript: text, voice: config.currentVoice?.(language) ?? defaultVoice(language), language: language === 'en' ? 'en' : 'pt-BR',
           // English: Cartesia returns phoneme timestamps, used directly for the mouth. Portuguese: it rejects them but returns
           // word timestamps in the same generation; the server reads the mouth shapes from each word's spelling inside its span.
           add_phoneme_timestamps: language === 'en', add_timestamps: true, output_format: { container: 'raw', encoding: 'pcm_s16le', sample_rate: 24000 } }),
@@ -215,7 +217,7 @@ export function createVoiceProvider(config: VoiceConfig, fetcher: typeof fetch =
       if (config.voicePaused) return pausedSpeech(text).audio;
       const response = await request('Voz Cartesia', 'https://api.cartesia.ai/tts/bytes', {
         method: 'POST', headers: { ...cartesiaHeaders, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ model_id: 'sonic-3.6', transcript: text, voice: config.currentVoice?.(language) ?? config.voiceId, language: language === 'en' ? 'en' : 'pt-BR', output_format: { container: 'wav', encoding: 'pcm_s16le', sample_rate: 24000 } }),
+        body: JSON.stringify({ model_id: 'sonic-3.6', transcript: text, voice: config.currentVoice?.(language) ?? defaultVoice(language), language: language === 'en' ? 'en' : 'pt-BR', output_format: { container: 'wav', encoding: 'pcm_s16le', sample_rate: 24000 } }),
       }, signal);
       const audio = Buffer.from(await response.arrayBuffer());
       if (audio.length < 44 || audio.length > 8_000_000 || audio.toString('ascii', 0, 4) !== 'RIFF' || audio.toString('ascii', 8, 12) !== 'WAVE') throw new Error('A voz retornou um áudio inválido.');

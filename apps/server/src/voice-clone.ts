@@ -3,7 +3,7 @@
 // of accepted speech the best takes (up to 60 s, one speaker) become a new clone; after the third the voice is frozen:
 // the raw takes are deleted and only the clip used for the final clone is kept.
 // English has its own clone, from the user's English speech only (after about 1, 5 and 10 minutes), so it carries
-// their real accent in English. Until it exists, English replies use the Portuguese clone. Neither touches the other.
+// their real accent in English. Until a language has its clone, it uses the other's. Neither touches the other.
 
 export type VoiceCloneConfig = { cartesiaKey: string; storageUrl: string; secret: string; userId: string };
 export function readVoiceCloneConfig(env: NodeJS.ProcessEnv = process.env): VoiceCloneConfig | null {
@@ -126,7 +126,7 @@ export function cloneStatus(state: CloneState, enabled: boolean): CloneStatus {
 
 // --- Service ---------------------------------------------------------------------------------------------------------
 export interface VoiceCloner {
-  // The voice for a reply in that language (English falls back to the Portuguese clone until its own exists).
+  // The voice for a reply in that language (each falls back to the other language's clone until its own exists).
   voiceId(language?: CloneLanguage): string | undefined;
   status(): CloneStatus;
   ready(): Promise<void>;
@@ -265,7 +265,9 @@ export function createVoiceCloner(config: VoiceCloneConfig, fetcher: typeof fetc
     return serial(async () => { state.ownVoice = ownVoice; await saveState(signal); return cloneStatus(state, true); });
   }
 
-  // The clones speak only while the user keeps "Minha voz" chosen; otherwise the original voice. English uses its own
-  // clone once it exists, the Portuguese one until then.
-  return { voiceId: (language: CloneLanguage = 'pt') => !state.ownVoice ? undefined : language === 'en' ? state.english.voiceId ?? state.voiceId : state.voiceId, status: () => cloneStatus(state, true), ready: () => load().catch(() => undefined), addTake, reset, choose };
+  // The clones speak only while the user keeps "Minha voz" chosen; otherwise the original voice. Each language uses its
+  // own clone once it exists and the other language's until then, so whoever starts in either language hears their
+  // own voice in both.
+  return { voiceId: (language: CloneLanguage = 'pt') => !state.ownVoice ? undefined
+      : language === 'en' ? state.english.voiceId ?? state.voiceId : state.voiceId ?? state.english.voiceId, status: () => cloneStatus(state, true), ready: () => load().catch(() => undefined), addTake, reset, choose };
 }

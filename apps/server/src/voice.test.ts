@@ -676,3 +676,14 @@ test('cortar o clone na primeira frase faz a nova fala continuar a anterior, sem
   assert.equal(second.at(-1)!.content, 'Eu tô pensando em mudar de emprego. Mas só depois do fim do ano.');
   assert.equal(second.some((message) => message.role === 'assistant'), false, 'The early answer is dropped.');
 });
+
+test('sem voz clonada, cada idioma usa a sua voz padrão; com clone, o clone', async () => {
+  const voices: string[] = [];
+  const fetcher: typeof fetch = async (_url, options) => { voices.push(JSON.parse(String(options!.body)).voice); return new Response(new Uint8Array(wav()), { headers: { 'Content-Type': 'audio/wav' } }); };
+  let clone: string | undefined;
+  const voice = createVoiceProvider({ openaiKey: 'o', cartesiaKey: 'c', voiceId: 'padrao-pt', englishVoiceId: 'padrao-en', model: 'm', currentVoice: () => clone }, fetcher);
+  await voice.speak('Oi.', AbortSignal.timeout(2000), 'pt'); await voice.speak('Hi.', AbortSignal.timeout(2000), 'en');
+  clone = 'minha-voz'; await voice.speak('Hi.', AbortSignal.timeout(2000), 'en');
+  assert.deepEqual(voices, ['padrao-pt', 'padrao-en', 'minha-voz']);
+  assert.equal(readVoiceConfig({ OPENAI_API_KEY: 'o', CARTESIA_API_KEY: 'c', CARTESIA_VOICE_ID: 'pt', CARTESIA_VOICE_ID_EN: 'en' })?.englishVoiceId, 'en');
+});

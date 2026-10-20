@@ -21,8 +21,11 @@ services:
         value: gpt-6-luna
       - key: CARTESIA_API_KEY
         sync: false
+      # Default voices (Cartesia voice ids, not secrets): "Padrão - PT-BR" and "Padrão - EN-US".
       - key: CARTESIA_VOICE_ID
-        sync: false
+        value: 5ccec9eb-c863-46d7-ade4-700406100e25
+      - key: CARTESIA_VOICE_ID_EN
+        value: 70b8d7de-e844-40f7-95a8-bb7b977f49d8
       # 1 = replies in silence without calling Cartesia; 0 = voice on.
       - key: CARTESIA_PAUSED
         value: "1"

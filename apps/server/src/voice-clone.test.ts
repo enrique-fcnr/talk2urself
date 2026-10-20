@@ -134,3 +134,16 @@ test('inglês tem o próprio clone: nasce das falas em inglês e não mexe no po
   assert.deepEqual(services.deletedVoices, ['voice-1', 'voice-2']);
   assert.equal(cloner.voiceId('en'), undefined);
 });
+
+test('quem começa em inglês ouve a própria voz também em português até o clone em português nascer', async () => {
+  const services = fakeServices();
+  const cloner = createVoiceCloner({ cartesiaKey: 'k', storageUrl: 'https://x.supabase.co', secret: 's', userId: 'user' }, services.fetcher, () => {});
+  const take = writeWav(speech(20));
+  assert.equal(cloner.voiceId('pt'), undefined, 'No clone yet: the default voice.');
+  for (let i = 0; i < 3; i++) await cloner.addTake(take, AbortSignal.timeout(5000), 'en');
+  assert.equal(cloner.voiceId('en'), 'voice-1');
+  assert.equal(cloner.voiceId('pt'), 'voice-1', 'Portuguese borrows the English clone.');
+  for (let i = 0; i < 8; i++) await cloner.addTake(take, AbortSignal.timeout(5000), 'pt');
+  assert.equal(cloner.voiceId('pt'), 'voice-2', 'Then its own.');
+  assert.equal(cloner.voiceId('en'), 'voice-1');
+});
