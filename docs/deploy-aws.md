@@ -35,8 +35,10 @@ microfone). O acesso é restrito por código: só entra quem abrir o site uma ve
 
 ## Domínio próprio
 
-Aponte o domínio (registro A) para o IP estático e rode `sudo DOMAIN=seudominio.com bash /opt/talk2urself/deploy/setup.sh`.
-Até lá, o endereço é `<ip-com-traços>.sslip.io`.
+O domínio é `talk2urself.com` (GoDaddy): registro A `@` → `35.175.84.219` e CNAME `www` → `talk2urself.com`.
+Para trocar de domínio, aponte o novo para o IP estático e rode
+`sudo DOMAIN=seudominio.com bash /opt/talk2urself/deploy/setup.sh`. O `www` e o endereço `<ip-com-traços>.sslip.io`
+passam a redirecionar para ele. Sem `DOMAIN`, o endereço é o `sslip.io`.
 
 ## Dia a dia
 

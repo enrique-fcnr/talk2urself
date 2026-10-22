@@ -75,10 +75,13 @@ step "Build do app"
 as_app sh -c "cd '$APP_DIR' && npm ci --include=dev --no-audit --no-fund && npm run build"
 
 step "Serviços (app e HTTPS)"
-if [ -z "${DOMAIN:-}" ]; then
-  DOMAIN="$(curl -fsS https://checkip.amazonaws.com | tr -d '[:space:]' | tr . -).sslip.io"
-fi
+IP_ADDRESS="$(curl -fsS https://checkip.amazonaws.com | tr -d '[:space:]' | tr . -).sslip.io"
+DOMAIN="${DOMAIN:-$IP_ADDRESS}"
 sed "s/^SITE_ADDRESS {/$DOMAIN {/" "$APP_DIR/deploy/Caddyfile" > /etc/caddy/Caddyfile
+if [ "$DOMAIN" != "$IP_ADDRESS" ]; then
+  # With a domain of its own, www and the old sslip.io address lead to it.
+  printf '\nwww.%s, %s {\n\tredir https://%s{uri} permanent\n}\n' "$DOMAIN" "$IP_ADDRESS" "$DOMAIN" >> /etc/caddy/Caddyfile
+fi
 install -m 644 "$APP_DIR/deploy/talk2urself.service" /etc/systemd/system/talk2urself.service
 systemctl daemon-reload
 systemctl enable -q talk2urself caddy
