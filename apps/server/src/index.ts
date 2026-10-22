@@ -5,6 +5,7 @@ import { appendFileSync, existsSync, mkdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { createMemoryService, readMemoryConfig } from './memory.ts';
 import { serializeDiagnostic, type MemoryDiagnosticRecord } from './memory-diagnostics.ts';
+import { readAccessCode } from './gate.ts';
 
 const config = readVoiceConfig();
 const memoryConfig = config ? readMemoryConfig() : null;
@@ -20,8 +21,12 @@ const logUsage = (record: Record<string, string | number>) => {
 };
 // The built web app, when present (production): this one server then serves both the page and the API.
 const webRoot = fileURLToPath(new URL('../../web/dist', import.meta.url));
+const accessCode = readAccessCode();
 const app = await createApp({
   webRoot: existsSync(webRoot + '/index.html') ? webRoot : undefined,
+  accessCode,
+  // TRUST_PROXY=loopback when a proxy on this machine (Caddy) is the only one in front.
+  trustProxy: process.env.TRUST_PROXY?.trim() || undefined,
   voice: config ? createVoiceProvider(config) : undefined,
   memory: memoryConfig ? createMemoryService(memoryConfig, fetch, logUsage) : undefined,
   cloner,
@@ -44,7 +49,8 @@ console.log(`Talk2urself: servidor em http://${host}:${port}`);
 console.log(config ? 'Conversa por voz configurada.' : 'Prévia demonstrativa: preencha as chaves e a voz no arquivo .env para ativar as APIs.');
 if (config?.voicePaused) console.log('Voz Cartesia pausada (CARTESIA_PAUSED=1): as respostas são faladas em silêncio, sem chamar a Cartesia.');
 if (cloner) console.log('Clonagem de voz ligada (VOICE_CLONING=1): falas limpas viram sua voz após ~2,5, 10 e 20 minutos.');
-console.log(memoryConfig ? 'Memória configurada; o primeiro uso verifica o acesso ao banco.' : 'Memória persistente pendente: configure o Supabase no servidor.');
+if (accessCode) console.log('Acesso restrito (ACCESS_CODE): só entra quem abrir o site com ?k=<código> uma vez.');
+console.log(memoryConfig ?'Memória configurada; o primeiro uso verifica o acesso ao banco.' : 'Memória persistente pendente: configure o Supabase no servidor.');
 
 async function shutdown() {
   await app.close();

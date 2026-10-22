@@ -1,0 +1,25 @@
+# systemd service: starts the app on boot and restarts it if it stops.
+[Unit]
+Description=talk2urself
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=talk2urself
+WorkingDirectory=/opt/talk2urself
+# Keys and settings (OpenAI, Cartesia, Supabase, ACCESS_CODE): readable only by root and this service.
+EnvironmentFile=/etc/talk2urself.env
+# Only Caddy on this machine reaches the app, and only it may report the client address.
+Environment=NODE_ENV=production HOST=127.0.0.1 PORT=3001 TRUST_PROXY=loopback
+ExecStart=/usr/bin/node --import tsx apps/server/src/index.ts
+Restart=always
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+# Usage counters and diagnostics go to .local.
+ReadWritePaths=/opt/talk2urself/.local
+
+[Install]
+WantedBy=multi-user.target

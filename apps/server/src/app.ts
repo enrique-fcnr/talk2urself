@@ -9,6 +9,7 @@ import type { WebSocket } from 'ws';
 import { emitDiagnostic, type DiagnosticSink, type DiagnosticStage, type MemoryDiagnosticRecord } from './memory-diagnostics.ts';
 import { createLanguageWorker } from './language-worker.ts';
 import { originAllowed, registerWeb } from './access.ts';
+import { registerGate } from './gate.ts';
 import type { VoiceCloner } from './voice-clone.ts';
 import { detectSpeechLanguage, type SpeechLanguage } from './speech-language.ts';
 import { heardPart, segmentGestures, splitSpeech, type SpeechSegment } from './speech-segments.ts';
@@ -20,9 +21,13 @@ import type { TimedSpeech } from './speech-timing.ts';
 // webRoot: serve the built web app from there (production).
 export async function createApp(options: { voice?: VoiceProvider; memory?: MemoryService; onUsage?: (record: Record<string, string | number>) => void; onMemoryDiagnostic?: (record: MemoryDiagnosticRecord) => void; webRoot?: string; cloner?: VoiceCloner;
   // Development only: each message the page sends and each state the server enters, without any content.
-  onDebug?: (record: Record<string, string | number>) => void } = {}) {
-  const app = Fastify({ logger: false, trustProxy: true });
+  onDebug?: (record: Record<string, string | number>) => void;
+  // accessCode: only browsers that opened the site with ?k=<code> get in (see gate.ts).
+  // trustProxy: which proxies may report the client address; behind a local Caddy, only 'loopback'.
+  accessCode?: string; trustProxy?: boolean | string } = {}) {
+  const app = Fastify({ logger: false, trustProxy: options.trustProxy ?? true });
   await app.register(websocket, { options: { maxPayload: maxRecordingBytes } });
+  if (options.accessCode) registerGate(app, options.accessCode);
   if (options.webRoot) registerWeb(app, options.webRoot);
   const viewers = new Set<WebSocket>();
   const notifyMemories = () => { for (const viewer of viewers) if (viewer.readyState === 1) viewer.send(JSON.stringify({ type: 'memory-sync' })); };
