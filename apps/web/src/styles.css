@@ -225,6 +225,10 @@ h1 { font-size: clamp(23px, 2.6vw, 35px); line-height: 1.3; letter-spacing: -1.1
 .caption[data-who='hint'] { color: var(--muted); font-size: .86em; }
 .caption-pulse { position: relative; display: inline-block; width: 8px; height: 8px; margin-right: 12px; border-radius: 50%; background: var(--accent); vertical-align: .12em; animation: word-emerge .7s ease both; }
 .caption-pulse::after { content: ''; position: absolute; inset: -5px; border-radius: 50%; border: 1.5px solid var(--accent); animation: hint-ring 1.8s ease-out infinite; }
+/* A hint that gives way to another leaves with its words: its dot and label go too, so only one dot shows. */
+.caption.leaving .caption-pulse, .caption.leaving .caption-who { animation: word-dissolve .28s ease-in both; }
+.caption:not(.leaving) .caption-pulse { animation-delay: .3s; }
+.caption.leaving .caption-pulse::after { animation: none; opacity: 0; }
 @keyframes hint-ring { from { opacity: .8; transform: scale(.6); } to { opacity: 0; transform: scale(1.9); } }
 /* Kelly sits low, on the start screen as in the conversation; the fade is tied to her body (set from script): solid to
    the shoulder line, gone a little below it, so the torso and the cut of the bust never show on any screen. */
@@ -306,7 +310,8 @@ h1 { font-size: clamp(23px, 2.6vw, 35px); line-height: 1.3; letter-spacing: -1.1
 @media (pointer: coarse) {
   .caption-word, .caption-who, .caption-pulse { animation-name: word-emerge-light; }
   .caption:not(.leaving) .caption-word { animation-delay: calc(.22s + var(--i) * 40ms); }
-  .caption.leaving .caption-word { animation: word-dissolve-light .26s ease-in both; }
+  .caption:not(.leaving) .caption-pulse, .caption:not(.leaving) .caption-who { animation-delay: .22s; }
+  .caption.leaving .caption-word, .caption.leaving .caption-pulse, .caption.leaving .caption-who { animation: word-dissolve-light .26s ease-in both; }
 }
 @keyframes word-emerge-light { from { opacity: 0; transform: translateY(.35em); } }
 @keyframes word-dissolve-light { to { opacity: 0; transform: translate(var(--drift), -.45em); } }
