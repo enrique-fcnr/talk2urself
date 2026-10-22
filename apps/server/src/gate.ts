@@ -96,8 +96,8 @@ export function restrictedPage(english: boolean) {
 <meta property="og:title" content="Talk2urself">
 <meta property="og:description" content="${text.tagline}">
 <style>
-:root { --bg: #faf9f7; --ink: #302f3d; --muted: #716c80; --accent: #7e58cb; --line: #e5e1ec; --panel: #fffdfb; color-scheme: light; }
-@media (prefers-color-scheme: dark) { :root { --bg: #0d0e17; --ink: #f2eff9; --muted: #b4acc4; --accent: #b499ff; --line: #363044; --panel: #1a1925; color-scheme: dark; } }
+:root { --bg: #faf9f7; --ink: #302f3d; --muted: #716c80; --accent: #8724fb; --line: #e5e1ec; --panel: #fffdfb; color-scheme: light; }
+@media (prefers-color-scheme: dark) { :root { --bg: #0d0e17; --ink: #f2eff9; --muted: #b4acc4; --accent: #8724fb; --line: #363044; --panel: #1a1925; color-scheme: dark; } }
 * { box-sizing: border-box; }
 body { margin: 0; min-height: 100svh; display: grid; place-items: center; padding: 24px 16px; background: var(--bg); color: var(--ink);
   font-family: Inter, 'Segoe UI', system-ui, sans-serif; -webkit-font-smoothing: antialiased; }
@@ -108,7 +108,7 @@ main { width: 100%; max-width: 460px; text-align: center; }
 .card { border: 1px solid var(--line); border-radius: 20px; background: var(--panel); padding: 24px 22px; }
 .card p { margin: 0; color: var(--muted); font-size: 15px; line-height: 1.6; }
 .card p + p { margin-top: 10px; }
-a.action { display: inline-block; margin-top: 22px; padding: 12px 24px; border-radius: 40px; background: var(--accent); color: var(--bg);
+a.action { display: inline-block; margin-top: 22px; padding: 12px 24px; border-radius: 40px; background: #8724fb; color: #fff;
   font-weight: 600; font-size: 15px; text-decoration: none; }
 a.action:hover, a.action:focus-visible { filter: brightness(1.08); }
 a.action:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }

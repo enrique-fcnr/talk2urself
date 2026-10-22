@@ -2,12 +2,12 @@
    and grows into the hologram (the scene is animated from the brain's spot on the page, --dx/--dy from the centre).
    Closing reverses it and the brain sinks back into her head. */
 /* Colours follow the app theme: night violet in dark, a pale lilac veil in light (the brain is then drawn as ink). */
-.brain-view { --bv-ink: #efe7ff; --bv-muted: #c3b3ea; --bv-faint: #a693d4; --bv-accent: #d2bcff; --bv-line: #ffffff2b; --bv-chip: #ffffff0f; --bv-chip-on: #ffffff26;
+.brain-view { --bv-ink: #efe7ff; --bv-muted: #c3b3ea; --bv-faint: #a693d4; --bv-accent: #8724fb; --bv-line: #ffffff2b; --bv-chip: #ffffff0f; --bv-chip-on: #ffffff26;
   --bv-card: #1b0f35eb; --bv-card-line: #c4a6ff40; --bv-card-pinned: #c4a6ff8c; --bv-shadow: 0 12px 40px #0008;
   --bv-scrim: radial-gradient(ellipse at 50% 42%, rgba(30, 16, 58, .58) 0, rgba(14, 7, 30, .74) 58%, rgba(6, 3, 12, .86) 100%);
   position: fixed; inset: 0; z-index: 1000; color: var(--bv-ink); font-size: 14px; background: var(--bv-scrim);
   -webkit-backdrop-filter: blur(9px) saturate(1.1); backdrop-filter: blur(9px) saturate(1.1); animation: brain-scrim-in .6s ease both; }
-.brain-view[data-theme='light'] { --bv-ink: #2c2a3a; --bv-muted: #5f5874; --bv-faint: #6d6584; --bv-accent: #6a45c4; --bv-line: #2c2a3a24; --bv-chip: #ffffffa8; --bv-chip-on: #ece4fb;
+.brain-view[data-theme='light'] { --bv-ink: #2c2a3a; --bv-muted: #5f5874; --bv-faint: #6d6584; --bv-accent: #8724fb; --bv-line: #2c2a3a24; --bv-chip: #ffffffa8; --bv-chip-on: #ece4fb;
   --bv-card: #fffffff2; --bv-card-line: #e2dbef; --bv-card-pinned: #b9a3ea; --bv-shadow: 0 14px 40px #4a32861f;
   --bv-scrim: radial-gradient(ellipse at 50% 42%, rgba(252, 250, 255, .8) 0, rgba(244, 239, 252, .88) 58%, rgba(236, 230, 248, .94) 100%); }
 .brain-view.closing { animation: brain-scrim-out .6s ease .05s both; }

@@ -134,7 +134,7 @@ export const PlotlyScatterView: React.FC<PlotlyScatterViewProps> = ({
         ? {
             paper_bgcolor: paperBg,
             plot_bgcolor: paperBg,
-            font: { color: fontColor, size: 12 },
+            font: { color: fontColor, size: 12, family: "'NB Architekt', Inter, sans-serif" },
             margin: { t: 8, r: 8, b: 8, l: 8 },
             scene: {
               xaxis: {
@@ -165,7 +165,7 @@ export const PlotlyScatterView: React.FC<PlotlyScatterViewProps> = ({
         : {
             paper_bgcolor: paperBg,
             plot_bgcolor: paperBg,
-            font: { color: fontColor, size: 12 },
+            font: { color: fontColor, size: 12, family: "'NB Architekt', Inter, sans-serif" },
             margin: { t: 8, r: 8, b: 8, l: 8 },
             xaxis: {
               showgrid: true,

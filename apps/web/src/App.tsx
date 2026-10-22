@@ -3,6 +3,10 @@ import { useConversation } from './useConversation';
 import type { BrainProbe } from './avatar/kelly';
 import Captions from './Captions';
 import SettingsPage from './SettingsPage';
+// The logo: dark letters on the light theme, light letters on the dark one (the 2 stays purple). Both load up
+// front and CSS shows the one for the theme, so switching themes swaps it at once.
+import logoLight from './brand/logo-light.png';
+import logoDark from './brand/logo-dark.png';
 const Avatar3D = lazy(() => import('./avatar/Avatar3D'));
 const BrainView = lazy(() => import('./brain/BrainView'));
 // Start screen: "a smarter version of you", with the adjective cycling. Feminine forms agree with "versão".
@@ -174,7 +178,7 @@ export default function App() {
   }, [started, online, state, entryAwake, waking, leaving]);
   return <div className="app" data-theme={theme} data-state={state} data-waking={waking} data-recording={recording} data-started={started} data-leaving={leaving}>
     <header className="header" ref={header}>
-      <a className="wordmark" href="/" aria-label="Talk2urself — início" tabIndex={leaving ? -1 : undefined}>talk<span>2</span>urself<span className="brand-dot">.</span></a>
+      <a className="wordmark" href="/" aria-label="Talk2urself — início" tabIndex={leaving ? -1 : undefined}><img className="logo logo-light" src={logoLight} alt="" /><img className="logo logo-dark" src={logoDark} alt="" /></a>
       <nav className="header-actions" aria-label="Navegação principal">
         <button className="settings-toggle" aria-label="Abrir configurações" title="Configurações" aria-expanded={settingsOpen} aria-controls="experience-panel" onClick={() => setSettingsOpen((open) => !open)}><Icon name="gear" /></button>
         <button className="theme-toggle" aria-label={theme === 'light' ? 'Ativar tema escuro' : 'Ativar tema claro'} title={theme === 'light' ? 'Tema escuro' : 'Tema claro'} aria-pressed={theme === 'dark'} onClick={() => setTheme(theme === 'light' ? 'dark' : 'light')}><Icon name={theme === 'light' ? 'moon' : 'sun'} /></button>
