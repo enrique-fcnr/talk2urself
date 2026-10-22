@@ -5,7 +5,7 @@ A Kelly passa a falar com a voz do próprio usuário, aprendida das falas dele d
 ## Como ligar
 
 1. Plano da Cartesia com clonagem instantânea (Pro ou acima; o Free não clona).
-2. No `.env` (local) ou no painel do Render: `CARTESIA_PAUSED=0` e `VOICE_CLONING=1`. Supabase precisa estar configurado (as amostras ficam no Storage).
+2. No `.env` (local) ou em `/etc/talk2urself.env` no servidor (docs/deploy-aws.md): `CARTESIA_PAUSED=0` e `VOICE_CLONING=1`. Supabase precisa estar configurado (as amostras ficam no Storage).
 3. Reiniciar o servidor. O log mostra "Clonagem de voz ligada".
 
 Com `VOICE_CLONING=0` (ou voz pausada) nada é coletado, nenhuma rota faz trabalho e a Kelly usa `CARTESIA_VOICE_ID`.

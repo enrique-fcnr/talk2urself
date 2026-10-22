@@ -126,8 +126,8 @@ test('contagem de memórias: desligada sem banco e lida do serviço com banco', 
 test('o próprio domínio é aceito como origem; outros não', async (t) => {
   const memory = { count: async () => 1 } as unknown as MemoryService;
   const app = await createApp({ memory }); t.after(() => app.close());
-  const ask = (origin: string) => app.inject({ method: 'GET', url: '/api/memory/count', headers: { origin, host: 'talk2urself.onrender.com' } });
-  assert.equal((await ask('https://talk2urself.onrender.com')).statusCode, 200);
+  const ask = (origin: string) => app.inject({ method: 'GET', url: '/api/memory/count', headers: { origin, host: 'talk2urself.com' } });
+  assert.equal((await ask('https://talk2urself.com')).statusCode, 200);
   assert.equal((await ask('https://evil.example')).statusCode, 403);
 });
 
