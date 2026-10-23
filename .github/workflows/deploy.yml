@@ -1,11 +1,11 @@
-# Deploys every push to the demo branch to the AWS Lightsail server (docs/deploy-aws.md).
+# Deploys every push to main to the AWS Lightsail server (docs/deploy-aws.md).
 # The deploy key may only run deploy/update.sh on the server: its authorized_keys entry forces that command,
 # so whatever the job asks for, the server pulls the branch, rebuilds and restarts the app.
 name: Deploy
 
 on:
   push:
-    branches: [feat/kelly-avatar]
+    branches: [main]
   workflow_dispatch:
 
 # One deploy at a time; a newer push waits for the running one instead of cutting it short.

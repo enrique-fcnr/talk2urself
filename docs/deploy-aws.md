@@ -42,7 +42,7 @@ passam a redirecionar para ele. Sem `DOMAIN`, o endereço é o `sslip.io`.
 
 ## Dia a dia
 
-- Atualizar: automático a cada push em `feat/kelly-avatar` (`.github/workflows/deploy.yml`). A Action entra no servidor
+- Atualizar: automático a cada push na `main` (`.github/workflows/deploy.yml`). A Action entra no servidor
   com uma chave própria (segredo `DEPLOY_SSH_KEY`, identidade do servidor em `DEPLOY_KNOWN_HOSTS`) que só consegue rodar
   o `update.sh`: o `authorized_keys` do usuário `ubuntu` força esse comando. Para rodar à mão:
   `sudo bash /opt/talk2urself/deploy/update.sh`, ou "Run workflow" na aba Actions.

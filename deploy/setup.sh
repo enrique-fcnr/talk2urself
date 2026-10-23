@@ -6,7 +6,7 @@
 set -euo pipefail
 
 REPO="${REPO:-git@github.com:enrique-fcnr/talk2urself.git}"
-BRANCH="${BRANCH:-feat/kelly-avatar}"
+BRANCH="${BRANCH:-main}"
 APP_DIR=/opt/talk2urself
 APP_USER=talk2urself
 ENV_FILE=/etc/talk2urself.env
