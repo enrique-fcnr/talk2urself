@@ -1,0 +1,40 @@
+# Deploys every push to the demo branch to the AWS Lightsail server (docs/deploy-aws.md).
+# The deploy key may only run deploy/update.sh on the server: its authorized_keys entry forces that command,
+# so whatever the job asks for, the server pulls the branch, rebuilds and restarts the app.
+name: Deploy
+
+on:
+  push:
+    branches: [feat/kelly-avatar]
+  workflow_dispatch:
+
+# One deploy at a time; a newer push waits for the running one instead of cutting it short.
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Update the server
+        env:
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/deploy && chmod 600 ~/.ssh/deploy
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          ssh -T -i ~/.ssh/deploy -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o ServerAliveInterval=30 ubuntu@35.175.84.219 | tee deploy.log
+          grep -q '^Atualizado para' deploy.log
+      - name: Check the site
+        run: |
+          for i in $(seq 1 10); do
+            code=$(curl -s -o /dev/null -w '%{http_code}' https://talk2urself.com/) && [ "$code" = 200 ] && { echo "talk2urself.com: $code"; exit 0; }
+            sleep 3
+          done
+          echo "talk2urself.com did not answer 200" && exit 1

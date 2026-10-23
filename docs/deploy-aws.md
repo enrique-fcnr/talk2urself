@@ -42,7 +42,10 @@ passam a redirecionar para ele. Sem `DOMAIN`, o endereço é o `sslip.io`.
 
 ## Dia a dia
 
-- Atualizar: `sudo bash /opt/talk2urself/deploy/update.sh`
+- Atualizar: automático a cada push em `feat/kelly-avatar` (`.github/workflows/deploy.yml`). A Action entra no servidor
+  com uma chave própria (segredo `DEPLOY_SSH_KEY`, identidade do servidor em `DEPLOY_KNOWN_HOSTS`) que só consegue rodar
+  o `update.sh`: o `authorized_keys` do usuário `ubuntu` força esse comando. Para rodar à mão:
+  `sudo bash /opt/talk2urself/deploy/update.sh`, ou "Run workflow" na aba Actions.
 - Logs: `sudo journalctl -u talk2urself -f` (Caddy: `sudo journalctl -u caddy -f`)
 - Trocar o código de acesso (corta todos os navegadores): edite `ACCESS_CODE` em `/etc/talk2urself.env` e reinicie.
 - Custos: alerta `talk2urself-mensal` (US$ 10) no AWS Budgets. Limites de gasto também nos painéis da OpenAI e da Cartesia.
