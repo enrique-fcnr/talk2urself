@@ -9,11 +9,11 @@ import logoLight from './brand/logo-light.png';
 import logoDark from './brand/logo-dark.png';
 const Avatar3D = lazy(() => import('./avatar/Avatar3D'));
 const BrainView = lazy(() => import('./brain/BrainView'));
-// Start screen: "a smarter version of you", with the adjective cycling. Feminine forms agree with "versão".
-const adjectives = ['inteligente', 'sábia', 'criativa', 'corajosa', 'calma', 'curiosa', 'confiante', 'gentil', 'focada', 'ousada'];
+// Start screen: "a smarter version of you", with the adjective cycling.
+const adjectives = ['smarter', 'wiser', 'more creative', 'braver', 'calmer', 'more curious', 'more confident', 'kinder', 'more focused', 'bolder'];
 const wordSeconds = 2.2, exitSeconds = .65, toastSeconds = 6;
 // Small promises under the headline, and a plain note about the microphone before the browser asks for it.
-const promises = ['Voz natural', 'Lembra de você', 'Reage como gente'];
+const promises = ['Natural voice', 'Remembers you', 'Reacts like a person'];
 type Theme = 'light' | 'dark';
 function Icon({ name }: { name: 'mic' | 'sun' | 'moon' | 'pause' | 'close' | 'play' | 'gear' }) {
   return <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -143,20 +143,20 @@ export default function App() {
   const busy = state === 'thinking' || state === 'speaking' || starting || submitting;
   const online = connection === 'online';
   const avatarState = state === 'idle' && entryAwake ? 'listening' : state;
-  const status = !online ? connection === 'connecting' ? 'Conectando…' : 'Reconectando…' : state === 'idle' && entryAwake ? 'Pronto para conversar' : waking ? 'Despertando' : recording ? 'Ouvindo você'
-    : ({ idle: 'Em repouso', listening: 'Pronto para ouvir', thinking: 'Refletindo', speaking: 'Respondendo' })[state];
+  const status = !online ? connection === 'connecting' ? 'Connecting…' : 'Reconnecting…' : state === 'idle' && entryAwake ? 'Ready to talk' : waking ? 'Waking up' : recording ? 'Listening to you'
+    : ({ idle: 'Resting', listening: 'Ready to listen', thinking: 'Thinking', speaking: 'Answering' })[state];
   const activity = !online ? 'offline' : recording ? 'listening' : waking || submitting || state === 'thinking' ? 'thinking'
     : state === 'speaking' && !needsPlayback ? 'speaking' : 'resting';
-  const activityLabel = !online ? status : needsPlayback ? 'Áudio pronto' : starting ? 'Preparando microfone'
-    : waking || greeting && activity === 'thinking' ? 'Despertando…'
-    : activity === 'resting' ? state === 'listening' ? 'Pronta para ouvir' : entryAwake ? 'Acordada' : 'Em repouso'
-    : ({ offline: '', listening: 'Ouvindo', speaking: 'Falando', thinking: 'Refletindo' })[activity];
+  const activityLabel = !online ? status : needsPlayback ? 'Audio ready' : starting ? 'Preparing the microphone'
+    : waking || greeting && activity === 'thinking' ? 'Waking up…'
+    : activity === 'resting' ? state === 'listening' ? 'Ready to listen' : entryAwake ? 'Awake' : 'Resting'
+    : ({ offline: '', listening: 'Listening', speaking: 'Speaking', thinking: 'Thinking' })[activity];
   const resting = started && online && state === 'listening' && !recording && !starting && !submitting && !needsPlayback;
   const showBrainHint = resting && hasSpoken && !brainOpened && !brainOut;
   const showTalkHint = started && online && mode === 'voice' && state === 'listening' && !recording && !starting && !submitting && !needsPlayback && !hasSpoken;
   // Kelly herself is the control: wake her, start and send a recording, or play a reply the browser held back.
-  const avatarLabel = needsPlayback ? 'Tocar resposta' : state === 'idle' ? entryAwake ? 'Começar conversa' : 'Despertar' : starting ? 'Acessando microfone'
-    : state === 'speaking' && mode === 'voice' ? 'Interromper e falar' : busy ? 'Aguarde a resposta' : mode === 'demo' ? 'Simular pergunta' : recording ? 'Enviar fala' : 'Começar a falar';
+  const avatarLabel = needsPlayback ? 'Play the answer' : state === 'idle' ? entryAwake ? 'Start the conversation' : 'Wake up' : starting ? 'Opening the microphone'
+    : state === 'speaking' && mode === 'voice' ? 'Interrupt and speak' : busy ? 'Wait for the answer' : mode === 'demo' ? 'Simulate a question' : recording ? 'Send' : 'Start speaking';
   const avatarReady = started && online && mode !== 'loading' && !waking && (needsPlayback || !busy || state === 'speaking' && mode === 'voice');
   // The conversation is by voice: talking, pausing to send, interrupting and saying goodbye. A tap on the brain opens the
   // memories; a tap anywhere else ends the conversation (the start screen begins the next one). A reply the browser held
@@ -178,50 +178,50 @@ export default function App() {
   }, [started, online, state, entryAwake, waking, leaving]);
   return <div className="app" data-theme={theme} data-state={state} data-waking={waking} data-recording={recording} data-started={started} data-leaving={leaving}>
     <header className="header" ref={header}>
-      <a className="wordmark" href="/" aria-label="Talk2urself — início" tabIndex={leaving ? -1 : undefined}><img className="logo logo-light" src={logoLight} alt="" /><img className="logo logo-dark" src={logoDark} alt="" /></a>
-      <nav className="header-actions" aria-label="Navegação principal">
-        <button className="settings-toggle" aria-label="Abrir configurações" title="Configurações" aria-expanded={settingsOpen} aria-controls="experience-panel" onClick={() => setSettingsOpen((open) => !open)}><Icon name="gear" /></button>
-        <button className="theme-toggle" aria-label={theme === 'light' ? 'Ativar tema escuro' : 'Ativar tema claro'} title={theme === 'light' ? 'Tema escuro' : 'Tema claro'} aria-pressed={theme === 'dark'} onClick={() => setTheme(theme === 'light' ? 'dark' : 'light')}><Icon name={theme === 'light' ? 'moon' : 'sun'} /></button>
+      <a className="wordmark" href="/" aria-label="Talk2urself — home" tabIndex={leaving ? -1 : undefined}><img className="logo logo-light" src={logoLight} alt="" /><img className="logo logo-dark" src={logoDark} alt="" /></a>
+      <nav className="header-actions" aria-label="Main navigation">
+        <button className="settings-toggle" aria-label="Open settings" title="Settings" aria-expanded={settingsOpen} aria-controls="experience-panel" onClick={() => setSettingsOpen((open) => !open)}><Icon name="gear" /></button>
+        <button className="theme-toggle" aria-label={theme === 'light' ? 'Switch to dark theme' : 'Switch to light theme'} title={theme === 'light' ? 'Dark theme' : 'Light theme'} aria-pressed={theme === 'dark'} onClick={() => setTheme(theme === 'light' ? 'dark' : 'light')}><Icon name={theme === 'light' ? 'moon' : 'sun'} /></button>
       </nav>
     </header>
     {settingsOpen ? <SettingsPage theme={theme} voiceClone={voiceClone} chooseVoice={chooseVoice} redoVoice={redoVoice} onClose={closeSettings} /> : null}
     <main className="experience" ref={experience}>
       {started ? null : <div className={`start-screen ${leaving ? 'leaving' : ''}`}>
         <button className="start-hit-area" aria-hidden="true" tabIndex={-1} onClick={begin} disabled={leaving} />
-        <section ref={topContent} className="start-content" aria-label="Conheça o talk2urself" data-ready={memories !== undefined}>
+        <section ref={topContent} className="start-content" aria-label="Meet talk2urself" data-ready={memories !== undefined}>
           {memories ? <div className="start-copy">
-            <span className="start-title">Que bom te ver de novo</span>
-            <span className="start-lede">Seu clone lembra de <strong>{memories} {memories === 1 ? 'coisa' : 'coisas'}</strong> sobre você.</span>
+            <span className="start-title">Good to see you again</span>
+            <span className="start-lede">Your clone remembers <strong>{memories} {memories === 1 ? 'thing' : 'things'}</strong> about you.</span>
           </div> : <div className="start-copy">
-            <span className="start-title">Converse com uma versão mais <span className="start-personal"><span className="rotating-word" key={wordIndex}>{adjectives[wordIndex]}</span> de você</span></span>
-            <span className="start-lede">Uma conversa por voz que aprende com você e lembra do que importa.</span>
-            <ul className="start-promises" aria-label="O que seu clone faz">{promises.map((promise) => <li key={promise}>{promise}</li>)}</ul>
+            <span className="start-title">Talk to a <span className="start-personal"><span className="rotating-word" key={wordIndex}>{adjectives[wordIndex]}</span> version of you</span></span>
+            <span className="start-lede">A voice conversation that learns from you and remembers what matters.</span>
+            <ul className="start-promises" aria-label="What your clone does">{promises.map((promise) => <li key={promise}>{promise}</li>)}</ul>
           </div>}
           <div className="start-actions" ref={bottomContent}>
             <button className="wake-button" onClick={begin} disabled={leaving}>
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 3v2M12 19v2M3 12h2M19 12h2M6 6l1.4 1.4M16.6 16.6 18 18M6 18l1.4-1.4M16.6 7.4 18 6" /><circle cx="12" cy="12" r="3.2" /></svg>
-              Acordar seu clone
+              Wake up your clone
             </button>
-            <p className="start-note">Toque para começar e fale primeiro. Interrompa quando quiser, falando. Para encerrar, toque na tela ou se despeça.</p>
+            <p className="start-note">Tap to begin and speak first. Interrupt anytime by speaking. To end, tap the screen or say goodbye.</p>
           </div>
         </section>
       </div>}
       {/* The screen shows only Kelly; status and both sides of the conversation stay available to screen readers. */}
       {!started && !leaving ? <span className="sr-only" role="status">{status}</span> : null}
-      <section className="sr-only" aria-label="Sua fala">{transcript}</section>
-      <section className="sr-only" aria-label="Resposta do personagem" aria-live="polite" aria-atomic="true">{text}</section>
+      <section className="sr-only" aria-label="What you said">{transcript}</section>
+      <section className="sr-only" aria-label="Your clone's answer" aria-live="polite" aria-atomic="true">{text}</section>
       <div className="avatar-stage">
         <div className="halo" aria-hidden="true" />
-        <button className="avatar" aria-label={avatarLabel} aria-disabled={!avatarReady} disabled={!started || !online} data-over-brain={overBrain} title={overBrain ? 'Ver memórias' : undefined} onClick={avatarAction}
+        <button className="avatar" aria-label={avatarLabel} aria-disabled={!avatarReady} disabled={!started || !online} data-over-brain={overBrain} title={overBrain ? 'See memories' : undefined} onClick={avatarAction}
           onPointerMove={(event) => { const over = started && event.pointerType === 'mouse' && !!brainProbe.current?.(event.clientX, event.clientY); if (over !== overBrain) setOverBrain(over); }}
           onPointerLeave={() => setOverBrain(false)}>
           <Suspense fallback={null}><Avatar3D state={avatarState} recording={recording} playbackRef={playbackRef} clearOf={topContent} theme={theme} micLevel={micLevel} brainOut={brainOut} invite={resting && !brainOut} brainProbe={brainProbe} clearBelow={bottomContent} holdLayout={leaving || started} restBelow={wide && !leaving && !started ? undefined : 28} aside={wide && !leaving && !started}
-            brainLocator={brainLocator} subjectTop={subjectTop} onNewMemory={() => { if (started) showMoment('nova memória'); }} /></Suspense>
+            brainLocator={brainLocator} subjectTop={subjectTop} onNewMemory={() => { if (started) showMoment('new memory'); }} /></Suspense>
         </button>
       </div>
       {/* No status pill: Kelly's own motion and the captions show what is happening; screen readers still hear it. */}
       {started || leaving ? <span className="sr-only" role="status" aria-atomic="true">{activityLabel}</span> : null}
-      {started ? <Captions text={text} transcript={transcript} speaking={state === 'speaking' && !needsPlayback} thinking={state === 'thinking' || submitting} playbackRef={playbackRef} place={captionCentre} hint={recording ? hasSpoken ? 'Ouvindo…' : 'Ouvindo… é só fazer uma pausa para enviar' : showTalkHint ? 'Pode falar' : showBrainHint ? 'Toque no cérebro para ver as memórias' : undefined} hintArrow={!recording && !showTalkHint && showBrainHint} /> : null}
+      {started ? <Captions text={text} transcript={transcript} speaking={state === 'speaking' && !needsPlayback} thinking={state === 'thinking' || submitting} playbackRef={playbackRef} place={captionCentre} hint={recording ? hasSpoken ? 'Listening…' : 'Listening… just pause to send' : showTalkHint ? 'Go ahead, speak' : showBrainHint ? 'Tap the brain to see the memories' : undefined} hintArrow={!recording && !showTalkHint && showBrainHint} /> : null}
       {moment ? <p className="memory-moment" data-kind="new" key={moment.id} aria-hidden="true" style={{ left: moment.x, top: moment.y }}>
         <i /><strong>{moment.text}</strong>
       </p> : null}

@@ -105,14 +105,14 @@ export function useConversation() {
           if (health.ok !== true || (health.mode !== 'voice' && health.mode !== 'demo')) throw new Error();
           setMode(health.mode); setModel(typeof health.model === 'string' ? health.model : null);
           cloneRef.current = parseCloneStatus(health.voiceClone); setVoiceClone(cloneRef.current);
-        }).catch(() => { if (!disposed && socketRef.current === socket) { setMode('loading'); setError('Não foi possível consultar a configuração. Recarregue a página.'); } });
+        }).catch(() => { if (!disposed && socketRef.current === socket) { setMode('loading'); setError('Could not load the settings. Reload the page.'); } });
       };
       socket.onmessage = (message) => {
         if (disposed || socketRef.current !== socket) return;
         if (message.data instanceof ArrayBuffer) { if (expectingAudio) player.current!.chunk(message.data); return; }
         if (typeof message.data !== 'string') return;
         const event = parseServerEvent(message.data);
-        if (!event) { setError('Recebemos uma mensagem inválida.'); return; }
+        if (!event) { setError('We received an invalid message.'); return; }
         if (event.type === 'error') { setError(event.message); setSubmitting(false); return; }
         if (event.type === 'usage') { setUsage(event.usage); return; }
         if (event.type === 'recall') { setRecall({ keys: new Set(event.memories.map(({ slot, value }) => recallKey(slot, value))), at: Date.now() }); return; }
@@ -138,7 +138,7 @@ export function useConversation() {
         // The server answers a held turn on its own: a recording still waiting for speech is dropped (it reopens after the reply).
         if ((event.state === 'thinking' || event.state === 'speaking') && recorderRef.current && !recorderRef.current.speaking()) { recorderRef.current.cancel(); recorderRef.current = null; setRecording(false); }
       };
-      socket.onerror = () => { if (!disposed) setError('A conexão está indisponível. Tentaremos novamente.'); };
+      socket.onerror = () => { if (!disposed) setError('The connection is unavailable. We will try again.'); };
       socket.onclose = () => {
         if (disposed || socketRef.current !== socket) return;
         socketRef.current = null; stopMedia(); resetMediaUi();
@@ -165,9 +165,9 @@ export function useConversation() {
         if (current !== generation.current) return;
         silences.current = 0;
         setRecording(false); setSubmitting(true);
-        if (blob.size === 0 || blob.size > maxRecordingBytes || seconds < 0.25) { setSubmitting(false); setError('Grave uma pergunta curta antes de enviar.'); return; }
+        if (blob.size === 0 || blob.size > maxRecordingBytes || seconds < 0.25) { setSubmitting(false); setError('Record a short question before sending.'); return; }
         // Skip the paid transcription when the microphone delivered near silence.
-        if (peak !== undefined && peak < quietPeak) { setSubmitting(false); setError('Seu microfone parece mudo ou com volume muito baixo. Aumente o volume de entrada nas configurações de som e tente novamente.'); return; }
+        if (peak !== undefined && peak < quietPeak) { setSubmitting(false); setError('Your microphone seems muted or too quiet. Raise the input volume in your sound settings and try again.'); return; }
         try {
           const bytes = await blob.arrayBuffer();
           if (current !== generation.current) return;
@@ -176,7 +176,7 @@ export function useConversation() {
           socket.send(JSON.stringify({ type: 'audio-input', mime: blob.type, seconds })); socket.send(bytes);
           // A take that began over the clone's voice may carry its echo: it never becomes a sample of the user's voice.
           lastTake.current = cloneRef.current?.ownVoice && (cloneRef.current.collecting || cloneRef.current.english.collecting) && !takeover ? blob : null;
-        } catch { if (current === generation.current) { setSubmitting(false); setError('Não foi possível enviar a gravação. Confira a conexão e tente novamente.'); } }
+        } catch { if (current === generation.current) { setSubmitting(false); setError('Could not send the recording. Check your connection and try again.'); } }
       }, (message) => { if (current === generation.current) { recorderRef.current = null; setRecording(false); setSubmitting(false); setError(message); } },
       // Hands-free: the turn ends by itself after a pause; if nothing was said, nothing is sent.
       { handsFree: true, stream, ...(takeover ? { floor } : {}), onSpeaking: () => sendJson({ type: 'user-speaking' }),
@@ -191,9 +191,9 @@ export function useConversation() {
     } catch (error) {
       if (current !== generation.current) return;
       live.current = false;
-      setError(error instanceof DOMException && error.name === 'NotAllowedError' ? 'Autorize o microfone no navegador para conversar.'
-        : error instanceof DOMException && error.name === 'NotFoundError' ? 'Não encontramos um microfone conectado.'
-        : error instanceof Error ? error.message : 'Não foi possível acessar o microfone.');
+      setError(error instanceof DOMException && error.name === 'NotAllowedError' ? 'Allow the microphone in your browser to talk.'
+        : error instanceof DOMException && error.name === 'NotFoundError' ? 'No microphone was found.'
+        : error instanceof Error ? error.message : 'Could not access the microphone.');
     } finally { if (current === generation.current) { startingRef.current = false; setStarting(false); } }
   }
   // Loudness of the user's voice while recording, for the clone to react to (0 when not recording).
@@ -226,14 +226,14 @@ export function useConversation() {
   async function redoVoice() {
     const response = await fetch('/api/voice/reset', { method: 'POST' });
     const status = response.ok ? parseCloneStatus(await response.json()) : null;
-    if (!status) throw new Error('Não foi possível refazer a voz agora. Tente novamente.');
+    if (!status) throw new Error('Could not redo your voice right now. Try again.');
     cloneRef.current = status; setVoiceClone(status);
   }
   // "Voz original" or "Minha voz"; choosing the user's own voice is what starts collecting their speech.
   async function chooseVoice(own: boolean) {
     const response = await fetch('/api/voice/choice', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ownVoice: own }) });
     const status = response.ok ? parseCloneStatus(await response.json()) : null;
-    if (!status) throw new Error('Não foi possível trocar a voz agora. Tente novamente.');
+    if (!status) throw new Error('Could not change the voice right now. Try again.');
     cloneRef.current = status; setVoiceClone(status);
   }
   return { voiceClone, redoVoice, chooseVoice, state, connection, mode, model, text, transcript, error, send, waking, recording, starting, submitting, needsPlayback, usage, recall, playbackRef, unlockAudio, playAnswer, micLevel };

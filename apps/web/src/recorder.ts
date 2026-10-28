@@ -98,7 +98,7 @@ export function createBargeDetector({ calibrationSeconds = .6, minSpeechSeconds 
 // The conversation opens the microphone once and keeps it for every turn: reopening it on each turn is slow, and on
 // phones it switches the audio mode back and forth.
 export function openMicrophone() {
-  if (!navigator.mediaDevices?.getUserMedia) return Promise.reject(new Error('Este navegador não oferece gravação de áudio. Abra em um navegador atualizado.'));
+  if (!navigator.mediaDevices?.getUserMedia) return Promise.reject(new Error('This browser cannot record audio. Open it in an up-to-date browser.'));
   return navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }, video: false });
 }
 
@@ -114,7 +114,7 @@ export function watchForBargeIn(stream: MediaStream, onSpeech: (floor: number) =
     if (done || voiced || !detector.update(rms, seconds)) return;
     fire();
   });
-  if (!meter) throw new Error('Não foi possível medir o microfone.');
+  if (!meter) throw new Error('Could not measure the microphone.');
   void voiceOn(stream, (probability, seconds) => { voiced = true; if (!done && detector.update(rmsNow, seconds, probability)) fire(); })
     .then((detector) => { if (done) detector?.stop(); else voice = detector; });
   return { stop() { if (done) return; done = true; meter.stop(); voice?.stop(); } };
@@ -125,12 +125,12 @@ export function watchForBargeIn(stream: MediaStream, onSpeech: (floor: number) =
 // in while the clone spoke), so the turn counts them as speaking from the start.
 export async function recordMicrophone(onComplete: (blob: Blob, seconds: number, peak?: number) => void, onError: (message: string) => void,
   options: { handsFree?: boolean; onSilent?: () => void; onVoice?: (probability: number) => void; onSpeaking?: () => void; stream?: MediaStream; floor?: number } = {}): Promise<Recording> {
-  if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === 'undefined') throw new Error('Este navegador não oferece gravação de áudio. Abra em um navegador atualizado.');
+  if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === 'undefined') throw new Error('This browser cannot record audio. Open it in an up-to-date browser.');
   const owned = !options.stream, stream = options.stream ?? await openMicrophone();
   let recorder: MediaRecorder;
   try {
     const mimeType = audioMimeTypes.find((mime) => MediaRecorder.isTypeSupported(mime));
-    if (!mimeType) throw new Error('Não encontramos um formato de áudio compatível neste navegador.');
+    if (!mimeType) throw new Error('This browser has no compatible audio format.');
     recorder = new MediaRecorder(stream, { mimeType });
   } catch (error) { if (owned) closeMicrophone(stream); throw error; }
   const gate = options.handsFree ? createSpeechGate(options.floor !== undefined ? { speaking: true, floor: options.floor } : {}) : undefined;
@@ -162,10 +162,10 @@ export async function recordMicrophone(onComplete: (blob: Blob, seconds: number,
   recorder.ondataavailable = (event) => {
     if (cancelled || !event.data.size) return;
     size += event.data.size;
-    if (size > maxRecordingBytes) { cancelled = true; stop(); onError('A gravação excedeu o limite. Tente uma pergunta mais curta.'); return; }
+    if (size > maxRecordingBytes) { cancelled = true; stop(); onError('The recording is too long. Try a shorter question.'); return; }
     chunks.push(event.data);
   };
-  recorder.onerror = () => { cancelled = true; stop(); onError('Não foi possível gravar. Confira o microfone e tente novamente.'); };
+  recorder.onerror = () => { cancelled = true; stop(); onError('Could not record. Check the microphone and try again.'); };
   recorder.onstop = () => {
     release();
     if (!cancelled) onComplete(new Blob(chunks, { type: recorder.mimeType }), Math.min((performance.now() - started) / 1000, maxRecordingSeconds), meter?.peak());

@@ -137,7 +137,7 @@ function Line({ shown, out = false }: { shown: Shown; out?: boolean }) {
   if (!out && shown.who === 'kelly') return <CipherLine shown={shown} />;
   const words = shown.text.split(' ');
   return <p className={`caption${out ? ' leaving' : ''}`} data-who={shown.who}>
-    {shown.who === 'you' ? <span className="caption-who">você</span> : shown.who === 'hint' ? <span className="caption-pulse" /> : null}
+    {shown.who === 'you' ? <span className="caption-who">you</span> : shown.who === 'hint' ? <span className="caption-pulse" /> : null}
     {words.map((word, i) => <span className="caption-word" key={i} style={{ '--i': i, '--n': words.length, '--drift': `${((i * 37) % 7 - 3) * .6}px` } as CSSProperties}>{word}</span>)}
     {shown.arrow ? <span className="caption-arrow" style={{ '--i': words.length } as CSSProperties} /> : null}
   </p>;

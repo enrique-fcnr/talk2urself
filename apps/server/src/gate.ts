@@ -69,10 +69,10 @@ function restricted(request: FastifyRequest, reply: FastifyReply, status: 401 | 
   const route = request.url.split('?')[0];
   reply.header('Cache-Control', 'no-store');
   if (route.startsWith('/api/') || route.startsWith('/ws') || /\.[a-z0-9]+$/i.test(route)) {
-    return reply.code(status).send({ error: 'Acesso restrito.' });
+    return reply.code(status).send({ error: 'Access restricted.' });
   }
-  const english = !/^pt\b/i.test(String(request.headers['accept-language'] ?? 'pt'));
-  return reply.code(status === 429 ? 429 : 200).type('text/html; charset=utf-8').send(restrictedPage(english));
+  // The interface is in English, and so is the public page.
+  return reply.code(status === 429 ? 429 : 200).type('text/html; charset=utf-8').send(restrictedPage(true));
 }
 
 const copy = {

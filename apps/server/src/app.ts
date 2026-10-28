@@ -18,6 +18,19 @@ import { looksUnfinished } from './turn-end.ts';
 import type { GestureCue } from '../../../shared/gestures.ts';
 import type { TimedSpeech } from './speech-timing.ts';
 
+// What the page shows when a turn fails: services raise their own (Portuguese) messages for the logs; the interface
+// gets a short English sentence for the kind of failure.
+export function userMessage(error: unknown) {
+  const text = error instanceof Error ? error.message : '';
+  // Out of credits or over the account's limits: the one failure the owner can fix from here.
+  const credits = /créditos/.test(text) ? " Check the account's credits and limits." : '';
+  if (text.startsWith('Não identificamos')) return "We didn't catch any speech. Say something short and try again.";
+  if (/^(Transcrição OpenAI:|A transcrição )/.test(text)) return `Transcription failed.${credits || ' Try again.'}`;
+  if (/^(Memória:)/.test(text)) return 'Memory is unavailable right now. Try again.';
+  if (/^(Voz Cartesia:|A voz )/.test(text)) return `The voice could not be generated.${credits || ' Try again.'}`;
+  if (/^(OpenAI:|A IA )/.test(text)) return `The AI could not answer.${credits || ' Try again.'}`;
+  return 'The conversation could not finish. Check your connection and try again.';
+}
 // webRoot: serve the built web app from there (production).
 export async function createApp(options: { voice?: VoiceProvider; memory?: MemoryService; onUsage?: (record: Record<string, string | number>) => void; onMemoryDiagnostic?: (record: MemoryDiagnosticRecord) => void; webRoot?: string; cloner?: VoiceCloner;
   // Development only: each message the page sends and each state the server enters, without any content.
@@ -36,22 +49,22 @@ export async function createApp(options: { voice?: VoiceProvider; memory?: Memor
   app.addHook('onClose', async () => { await languageWorker?.close(); });
   app.get('/api/memory/vectors', async (request, reply) => {
     reply.header('Cache-Control', 'no-store');
-    if (!originAllowed(request)) return reply.code(403).send({ error: 'Origem não permitida.' });
+    if (!originAllowed(request)) return reply.code(403).send({ error: 'Origin not allowed.' });
     if (!options.memory) return { enabled: false };
     try { return { enabled: true, ...await options.memory.vectors(AbortSignal.timeout(20_000)) }; }
-    catch { return reply.code(503).send({ error: 'Não foi possível carregar o mapa de memórias.' }); }
+    catch { return reply.code(503).send({ error: 'Could not load the memory map.' }); }
   });
   // How many facts Kelly holds; the avatar's brain glows brighter as it grows.
   app.get('/api/memory/count', async (request, reply) => {
     reply.header('Cache-Control', 'no-store');
-    if (!originAllowed(request)) return reply.code(403).send({ error: 'Origem não permitida.' });
+    if (!originAllowed(request)) return reply.code(403).send({ error: 'Origin not allowed.' });
     if (!options.memory?.count) return { enabled: false };
     try { return { enabled: true, count: await options.memory.count(AbortSignal.timeout(10_000)) }; }
-    catch { return reply.code(503).send({ error: 'Não foi possível contar as memórias.' }); }
+    catch { return reply.code(503).send({ error: 'Could not count the memories.' }); }
   });
   // Canal de observação: não recebe áudio, não escreve no banco nem chama modelos.
   app.get('/ws/memories', { websocket: true, preValidation: async (request, reply) => {
-    if (!originAllowed(request)) await reply.code(403).send({ error: 'Origem não permitida.' });
+    if (!originAllowed(request)) await reply.code(403).send({ error: 'Origin not allowed.' });
   } }, (socket) => {
     viewers.add(socket);
     socket.send(JSON.stringify({ type: 'memory-sync' }));
@@ -65,49 +78,49 @@ export async function createApp(options: { voice?: VoiceProvider; memory?: Memor
   // Voice cloning (VOICE_CLONING=1): the page sends each clean take of the user's speech as 16-bit mono WAV.
   app.addContentTypeParser('audio/wav', { parseAs: 'buffer', bodyLimit: 2 * 1024 * 1024 }, (_request, body, done) => done(null, body));
   app.get('/api/voice', async (request, reply) => {
-    if (!originAllowed(request)) return reply.code(403).send({ error: 'Origem não autorizada.' });
+    if (!originAllowed(request)) return reply.code(403).send({ error: 'Origin not allowed.' });
     if (!options.cloner) return { enabled: false };
     await options.cloner.ready();
     return options.cloner.status();
   });
   app.post('/api/voice/sample', async (request, reply) => {
-    if (!originAllowed(request)) return reply.code(403).send({ error: 'Origem não autorizada.' });
-    if (!options.cloner) return reply.code(404).send({ error: 'Clonagem de voz desligada.' });
-    if (!Buffer.isBuffer(request.body)) return reply.code(415).send({ error: 'Envie a amostra em WAV.' });
+    if (!originAllowed(request)) return reply.code(403).send({ error: 'Origin not allowed.' });
+    if (!options.cloner) return reply.code(404).send({ error: 'Voice cloning is off.' });
+    if (!Buffer.isBuffer(request.body)) return reply.code(415).send({ error: 'Send the sample as WAV.' });
     // language: the language the take was spoken in (each language has its own clone).
     const language = (request.query as { language?: string }).language === 'en' ? 'en' : 'pt';
     try { return await options.cloner.addTake(request.body, AbortSignal.timeout(90_000), language); }
-    catch { return reply.code(503).send({ error: 'Não foi possível guardar a amostra de voz agora.' }); }
+    catch { return reply.code(503).send({ error: 'Could not save the voice sample right now.' }); }
   });
   app.post('/api/voice/choice', async (request, reply) => {
-    if (!originAllowed(request)) return reply.code(403).send({ error: 'Origem não autorizada.' });
-    if (!options.cloner) return reply.code(404).send({ error: 'Sua voz ainda não está disponível.' });
+    if (!originAllowed(request)) return reply.code(403).send({ error: 'Origin not allowed.' });
+    if (!options.cloner) return reply.code(404).send({ error: 'Your voice is not available yet.' });
     const body = request.body as { ownVoice?: unknown } | undefined;
-    if (typeof body?.ownVoice !== 'boolean') return reply.code(400).send({ error: 'Escolha inválida.' });
+    if (typeof body?.ownVoice !== 'boolean') return reply.code(400).send({ error: 'Invalid choice.' });
     try { return await options.cloner.choose(body.ownVoice, AbortSignal.timeout(30_000)); }
-    catch { return reply.code(503).send({ error: 'Não foi possível trocar a voz agora.' }); }
+    catch { return reply.code(503).send({ error: 'Could not change the voice right now.' }); }
   });
   // "Refazer minha voz": deletes the clone and every sample; collecting starts over.
   app.post('/api/voice/reset', async (request, reply) => {
-    if (!originAllowed(request)) return reply.code(403).send({ error: 'Origem não autorizada.' });
-    if (!options.cloner) return reply.code(404).send({ error: 'Clonagem de voz desligada.' });
+    if (!originAllowed(request)) return reply.code(403).send({ error: 'Origin not allowed.' });
+    if (!options.cloner) return reply.code(404).send({ error: 'Voice cloning is off.' });
     try { return await options.cloner.reset(AbortSignal.timeout(60_000)); }
-    catch { return reply.code(503).send({ error: 'Não foi possível refazer a voz agora. Tente novamente.' }); }
+    catch { return reply.code(503).send({ error: 'Could not redo your voice right now. Try again.' }); }
   });
   app.get('/api/memory', async (request, reply) => {
-    if (!originAllowed(request)) return reply.code(403).send({ error: 'Origem não permitida.' });
+    if (!originAllowed(request)) return reply.code(403).send({ error: 'Origin not allowed.' });
     if (!options.memory) return { enabled: false };
     try {
       const context = await options.memory.inspect(AbortSignal.timeout(20_000));
       return { enabled: true, summary: context.summary, profile: context.profile, gaps: context.gaps, version: context.version, categories: context.categories };
-    } catch { return reply.code(503).send({ error: 'Não foi possível carregar suas memórias.' }); }
+    } catch { return reply.code(503).send({ error: 'Could not load your memories.' }); }
   });
 
   app.get('/ws', {
     websocket: true,
     preValidation: async (request, reply) => {
       if (!originAllowed(request)) {
-        await reply.code(403).send({ error: 'Origem não permitida.' });
+        await reply.code(403).send({ error: 'Origin not allowed.' });
       }
     },
   }, (socket) => {
@@ -294,7 +307,7 @@ export async function createApp(options: { voice?: VoiceProvider; memory?: Memor
         if (!valid()) return;
       } catch {
         if (!valid()) return;
-        send({ type: 'error', message: 'Não foi possível concluir a abertura. Você pode começar a falar ou tentar despertar novamente.' });
+        send({ type: 'error', message: 'The opening could not finish. You can start speaking or try waking your clone again.' });
         changeState('listening');
       } finally { if (controller === active) controller = undefined; }
     }
@@ -318,7 +331,7 @@ export async function createApp(options: { voice?: VoiceProvider; memory?: Memor
       const releaseMemory = options.memory?.acquire();
       if (options.memory && !releaseMemory) {
         turnDone();
-        send({ type: 'error', message: 'Aguarde a outra conversa terminar antes de enviar uma nova fala.' });
+        send({ type: 'error', message: 'Wait for the other conversation to finish before speaking again.' });
         changeState('listening');
         return;
       }
@@ -450,7 +463,7 @@ export async function createApp(options: { voice?: VoiceProvider; memory?: Memor
             } catch (error) {
               if (!phaseFailed) emitDiagnostic(diagnostic, { stage: phase, outcome: 'failed', reason: 'service_error' });
               emitDiagnostic(diagnostic, { stage: 'turn', outcome: 'failed' });
-              send({ type: 'error', message: error instanceof Error && error.message.startsWith('Memória:') ? error.message : 'Memória: não foi possível guardar esta conversa.' });
+              send({ type: 'error', message: 'Memory: could not save this conversation.' });
             } finally { releaseMemory?.(); turnDone(); }
           })();
           // An interruption after this point shortens the saved turn once it has landed.
@@ -467,8 +480,7 @@ export async function createApp(options: { voice?: VoiceProvider; memory?: Memor
           emitDiagnostic(diagnostic, { stage: 'turn', outcome: 'failed' });
         }
         if (!valid()) return;
-        const message = error instanceof Error && /^(Memória:|Transcrição OpenAI:|OpenAI:|Voz Cartesia:|A transcrição |A IA |A voz |Não identificamos)/.test(error.message)
-          ? error.message : 'Não foi possível concluir a conversa. Confira sua conexão e tente novamente.';
+        const message = userMessage(error);
         if (spoken && speech === spoken) endSpeech();
         send({ type: 'error', message });
         changeState('listening');
@@ -486,20 +498,20 @@ export async function createApp(options: { voice?: VoiceProvider; memory?: Memor
         const input = pendingAudio;
         pendingAudio = null;
         if (!options.voice || state !== 'listening' || !input) {
-          send({ type: 'error', message: 'O áudio chegou fora do turno de fala.' });
+          send({ type: 'error', message: 'The audio arrived outside your turn to speak.' });
           return;
         }
         clearTimer();
         const audio = Buffer.isBuffer(payload) ? payload : Array.isArray(payload) ? Buffer.concat(payload) : Buffer.from(payload);
         if (audio.length === 0 || audio.length > maxRecordingBytes) {
-          send({ type: 'error', message: 'A gravação está vazia ou excede o limite.' });
+          send({ type: 'error', message: 'The recording is empty or too long.' });
           return;
         }
         void respond(audio, input);
         return;
       }
       if (payload.toString().length > 4096) {
-        send({ type: 'error', message: 'Mensagem muito grande.' });
+        send({ type: 'error', message: 'Message too large.' });
         return;
       }
       const progress = parseSpeechProgress(payload.toString());
@@ -514,16 +526,16 @@ export async function createApp(options: { voice?: VoiceProvider; memory?: Memor
       const input = parseAudioInput(payload.toString());
       if (input) {
         if (!options.voice || state !== 'listening' || pendingAudio) {
-          send({ type: 'error', message: 'Aguarde o turno atual terminar.' });
+          send({ type: 'error', message: 'Wait for the current turn to finish.' });
           return;
         }
         pendingAudio = input;
-        timer = setTimeout(() => { pendingAudio = null; send({ type: 'error', message: 'A gravação não chegou. Tente novamente.' }); }, 10_000);
+        timer = setTimeout(() => { pendingAudio = null; send({ type: 'error', message: 'The recording did not arrive. Try again.' }); }, 10_000);
         return;
       }
       const command = parseClientCommand(payload.toString());
       if (!command) {
-        send({ type: 'error', message: 'Comando não reconhecido.' });
+        send({ type: 'error', message: 'Unknown command.' });
         return;
       }
       if (command === 'reset') {
@@ -557,7 +569,7 @@ export async function createApp(options: { voice?: VoiceProvider; memory?: Memor
         }, 900);
         return;
       }
-      send({ type: 'error', message: 'Aguarde o turno atual terminar.' });
+      send({ type: 'error', message: 'Wait for the current turn to finish.' });
     });
     socket.on('close', cancel);
     socket.on('error', cancel);

@@ -361,7 +361,7 @@ test('falha de gravação da memória não segura a fala, avisa o erro e libera 
   // The memory is written while the clone already speaks; its failure is reported, never a new state.
   let error: any;
   for (;;) { const event = await channel.next(); if (!(event instanceof ArrayBuffer) && event.type === 'error') { error = event; break; } }
-  assert.match(error.message, /^Memória:/);
+  assert.match(error.message, /^Memory:/);
   assert.equal(released, true);
   await delay(20);
   assert.deepEqual(notifications, ['{"type":"memory-sync"}'], 'Uma gravação recusada não avisa que houve atualização.');
@@ -500,7 +500,7 @@ test('erro na transcrição OpenAI orienta sobre saldo sem chamar resposta ou vo
   const address = await app.listen({ host: '127.0.0.1', port: 0 }); const channel = new Channel(address);
   t.after(async () => { await channel.close(); await app.close(); });
   await channel.opened; await channel.next(); channel.command('start'); await channel.next(); channel.audio();
-  await channel.next(); assert.match((await channel.next()).message, /Transcrição OpenAI: Confira créditos/);
+  await channel.next(); assert.match((await channel.next()).message, /^Transcription failed\. Check the account's credits and limits\.$/);
   assert.equal((await channel.next()).state, 'listening'); assert.equal(downstream, 0);
 });
 

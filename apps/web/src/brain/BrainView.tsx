@@ -17,7 +17,7 @@ const size = .82, cameraRest = 3.3, cameraStart = 3.9, introSeconds = 1.2, close
 const flySeconds = 1.6, flyStagger = .09, moveSeconds = 1.2;
 const fallbackColor = '#b58cff';
 const ease = (t: number) => t < 0 ? 0 : t > 1 ? 1 : 1 - Math.pow(1 - t, 3);
-const label = (point: BrainPoint) => point.memory.category?.label ?? 'Lembrança';
+const label = (point: BrainPoint) => point.memory.category?.label ?? 'Memory';
 const color = (point: BrainPoint) => point.memory.category?.color ?? fallbackColor;
 
 // Warm up the shape so the first opening is instant.
@@ -333,28 +333,28 @@ export default function BrainView({ origin, recall, theme = 'dark', onClose, onL
     style={{ '--origin-x': `${origin.x}px`, '--origin-y': `${origin.y}px`, '--dx': `${origin.x - innerWidth / 2}px`, '--dy': `${origin.y - innerHeight / 2}px` } as CSSProperties}>
     <div ref={host} className="brain-scene" />
     <header className="brain-header">
-      <div><h2 id="brain-title">Memórias</h2>
-        <p>{status === 'ready' ? count ? picked ? `${picked.label} · ${picked.count} de ${count} ${count === 1 ? 'memória' : 'memórias'}` : `${count} ${count === 1 ? 'memória' : 'memórias'} · ${subjects.length} ${subjects.length === 1 ? 'assunto' : 'assuntos'}` : 'Ainda vazio' : status === 'loading' ? 'Acendendo…' : ''}</p></div>
-      <button ref={closeButton} className="brain-close" aria-label="Fechar memórias" onClick={close}>
+      <div><h2 id="brain-title">Memories</h2>
+        <p>{status === 'ready' ? count ? picked ? `${picked.label} · ${picked.count} of ${count} ${count === 1 ? 'memory' : 'memories'}` : `${count} ${count === 1 ? 'memory' : 'memories'} · ${subjects.length} ${subjects.length === 1 ? 'subject' : 'subjects'}` : 'Still empty' : status === 'loading' ? 'Lighting up…' : ''}</p></div>
+      <button ref={closeButton} className="brain-close" aria-label="Close memories" onClick={close}>
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18" /></svg>
       </button>
     </header>
-    {status === 'ready' && !count ? <p className="brain-message">Converse com seu clone para preencher o cérebro. Cada coisa que ele aprender sobre você vira um ponto de luz aqui.</p> : null}
-    {status === 'disabled' ? <p className="brain-message">A memória não está configurada no servidor.</p> : null}
-    {status === 'error' ? <p className="brain-message">Não foi possível acender as memórias. <button onClick={() => { setStatus('loading'); setRefresh((n) => n + 1); }}>Tentar de novo</button></p> : null}
+    {status === 'ready' && !count ? <p className="brain-message">Talk to your clone to fill the brain. Everything it learns about you becomes a point of light here.</p> : null}
+    {status === 'disabled' ? <p className="brain-message">Memory is not set up on the server.</p> : null}
+    {status === 'error' ? <p className="brain-message">Could not light up the memories. <button onClick={() => { setStatus('loading'); setRefresh((n) => n + 1); }}>Try again</button></p> : null}
     {focus ? <div ref={card} className={`brain-card${focus.pinned ? ' pinned' : ''}`} role="status">
       <span className="brain-card-subject"><i style={{ background: color(focus.point) }} />{label(focus.point)}</span>
       <p>{focus.point.memory.value}</p>
-      <small>{recalled(focus.point) ? 'Usada na última resposta · ' : ''}Lembrada em {new Date(focus.point.memory.createdAt).toLocaleDateString('pt-BR', { day: 'numeric', month: 'short', year: 'numeric' })}</small>
+      <small>{recalled(focus.point) ? 'Used in the last answer · ' : ''}Remembered on {new Date(focus.point.memory.createdAt).toLocaleDateString('en-US', { day: 'numeric', month: 'short', year: 'numeric' })}</small>
     </div> : null}
     <footer ref={footer} className="brain-footer">
-      {subjects.length ? <ul className="brain-subjects" aria-label="Filtrar por assunto">{subjects.map((item) =>
+      {subjects.length ? <ul className="brain-subjects" aria-label="Filter by subject">{subjects.map((item) =>
         <li key={item.key}><button aria-pressed={subject === item.key} onClick={() => { setFocus(null); setSubject((current) => current === item.key ? null : item.key); }}>
           <i style={{ background: item.color }} />{item.label} <span>{item.count}</span></button></li>)}</ul> : null}
-      <p className="brain-hint">{count ? mouse ? 'Arraste para girar · clique num ponto para ler · clique fora para voltar' : 'Gire com o dedo · toque num ponto para ler · toque fora para voltar' : mouse ? 'Clique fora para voltar' : 'Toque fora para voltar'}
-        {' · '}<a href="/memories" target="_blank" rel="noreferrer">Mapa detalhado&nbsp;↗</a></p>
+      <p className="brain-hint">{count ? mouse ? 'Drag to rotate · click a point to read it · click outside to go back' : 'Rotate with your finger · tap a point to read it · tap outside to go back' : mouse ? 'Click outside to go back' : 'Tap outside to go back'}
+        {' · '}<a href="/memories" target="_blank" rel="noreferrer">Detailed map&nbsp;↗</a></p>
     </footer>
-    <ul className="sr-only" aria-label="Lista de memórias">{layout?.points.map((point) =>
-      <li key={point.id}><button onClick={() => setFocus({ point, pinned: true })}>{label(point)}: {point.memory.value}{recalled(point) ? ' (usada na última resposta)' : ''}</button></li>)}</ul>
+    <ul className="sr-only" aria-label="List of memories">{layout?.points.map((point) =>
+      <li key={point.id}><button onClick={() => setFocus({ point, pinned: true })}>{label(point)}: {point.memory.value}{recalled(point) ? ' (used in the last answer)' : ''}</button></li>)}</ul>
   </div>, document.body);
 }

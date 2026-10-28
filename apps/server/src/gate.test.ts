@@ -33,14 +33,14 @@ test('with an access code nothing is served without the cookie', async () => {
   const app = await createApp({ webRoot: webRoot(), accessCode: code });
   const page = await app.inject({ url: '/', headers: { 'accept-language': 'pt-BR,pt;q=0.9' } });
   assert.equal(page.statusCode, 200);
-  assert.match(page.body, /acesso ainda é restrito/);
+  assert.match(page.body, /Access is restricted/);
   assert.match(page.body, /linkedin\.com\/in\/enrique-fernandes/);
   assert.doesNotMatch(page.body, /id="root"/, 'the app itself is not sent');
   assert.match((await app.inject({ url: '/configuracoes', headers: { 'accept-language': 'en-US,en' } })).body, /Access is restricted/);
   for (const url of ['/api/health', '/api/memory', '/api/voice', '/api/memory/vectors', '/ws', '/ws/memories', '/assets/app.js', '/index.html']) {
     const response = await app.inject(url);
     assert.equal(response.statusCode, 401, url);
-    assert.deepEqual(response.json(), { error: 'Acesso restrito.' }, url);
+    assert.deepEqual(response.json(), { error: 'Access restricted.' }, url);
   }
   const voice = await app.inject({ method: 'POST', url: '/api/voice/reset' });
   assert.equal(voice.statusCode, 401);

@@ -44,15 +44,15 @@ export async function sendVoiceSample(blob: Blob, language: 'pt' | 'en' = 'pt'):
 const minutes = (seconds: number) => `${Math.floor(seconds / 60)}:${String(Math.floor(seconds % 60)).padStart(2, '0')}`;
 // One line for the settings panel: where the voice is in its collect → clone → freeze cycle.
 export function voiceStatus(status: VoiceCloneStatus): string {
-  if (status.frozen) return 'Seu clone fala com a sua voz.';
-  if (!status.cloned) return `Aprendendo sua voz: ${minutes(status.collectedSeconds)} de ${minutes(status.nextAt ?? 150)}. Até lá, seu clone usa a voz original.`;
-  return `Seu clone já fala com a sua voz e continua refinando (${minutes(status.collectedSeconds)} de ${minutes(status.nextAt ?? 1200)}).`;
+  if (status.frozen) return 'Your clone speaks with your voice.';
+  if (!status.cloned) return `Learning your voice: ${minutes(status.collectedSeconds)} of ${minutes(status.nextAt ?? 150)}. Until then, your clone uses the original voice.`;
+  return `Your clone already speaks with your voice and keeps refining it (${minutes(status.collectedSeconds)} of ${minutes(status.nextAt ?? 1200)}).`;
 }
 // The English clone, once the user has spoken some English: its own line under the Portuguese one.
 export function englishStatus(status: VoiceCloneStatus): string | null {
   const english = status.english;
   if (!english.collectedSeconds && !english.cloned) return null;
-  if (english.frozen) return 'Em inglês, ele fala com a sua voz e o seu sotaque.';
-  if (!english.cloned) return `Inglês: aprendendo seu sotaque, ${minutes(english.collectedSeconds)} de ${minutes(english.nextAt ?? 60)}. Até lá, usa a sua voz em português.`;
-  return `Em inglês, ele já usa a sua voz e o seu sotaque, e continua refinando (${minutes(english.collectedSeconds)} de ${minutes(english.nextAt ?? 600)}).`;
+  if (english.frozen) return 'In English, it speaks with your voice and your accent.';
+  if (!english.cloned) return `English: learning your accent, ${minutes(english.collectedSeconds)} of ${minutes(english.nextAt ?? 60)}. Until then, it uses your Portuguese voice.`;
+  return `In English, it already uses your voice and your accent, and keeps refining them (${minutes(english.collectedSeconds)} of ${minutes(english.nextAt ?? 600)}).`;
 }

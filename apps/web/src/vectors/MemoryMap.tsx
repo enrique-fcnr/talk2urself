@@ -4,11 +4,11 @@ import { cosineSimilarity, type Projection, type ProjectedPoint } from './projec
 import PlotlyScatterView from '../vendor/vectordbz/PlotlyScatterView';
 import './map.css';
 
-const topics: Record<string, string> = { interests: 'Interesses', family: 'Família', friends: 'Amigos', work: 'Trabalho', studies: 'Estudos',
-  goals: 'Objetivos', name: 'Nome', routine: 'Rotina', principles: 'Princípios', constraints: 'Limites', personal_life: 'Vida pessoal',
-  life_context: 'Momento de vida', life_events: 'Acontecimentos', difficult_experiences: 'Experiências relatadas',
-  expressions: 'Expressões', speaking_preferences: 'Conversa', reasoning_style: 'Raciocínio' };
-const topic = (slot: string) => topics[slot] ?? 'Lembrança';
+const topics: Record<string, string> = { interests: 'Interests', family: 'Family', friends: 'Friends', work: 'Work', studies: 'Studies',
+  goals: 'Goals', name: 'Name', routine: 'Routine', principles: 'Principles', constraints: 'Limits', personal_life: 'Personal life',
+  life_context: 'Stage of life', life_events: 'Life events', difficult_experiences: 'Reported experiences',
+  expressions: 'Expressions', speaking_preferences: 'Conversation', reasoning_style: 'Reasoning' };
+const topic = (slot: string) => topics[slot] ?? 'Memory';
 const color = (point: ProjectedPoint) => point.document.category?.color ?? '#a68ae8';
 const pointTopic = (point: ProjectedPoint) => point.document.category?.label ?? topic(point.document.slot);
 
@@ -39,11 +39,11 @@ export default function MemoryMap() {
         if (!response.ok) throw new Error();
         const data: VectorSnapshot & { enabled: boolean } = await response.json();
         if (!active) return;
-        if (!data.enabled) { setSnapshot(null); setProjection({ points: [], retainedVariance: 0 }); setError('Configure a memória do Supabase no servidor para abrir o mapa.'); return; }
+        if (!data.enabled) { setSnapshot(null); setProjection({ points: [], retainedVariance: 0 }); setError('Set up the Supabase memory on the server to open the map.'); return; }
         const next = JSON.stringify(data);
         if (next !== fingerprint) { fingerprint = next; setSnapshot(data); }
         setUpdatedAt(new Date()); setError('');
-      } catch { if (active) setError('Não foi possível sincronizar. O último mapa pode estar desatualizado; vamos tentar novamente.'); }
+      } catch { if (active) setError('Could not sync. The last map may be out of date; we will try again.'); }
       finally { pending = false; if (active) { setLoading(false); if (again) { again = false; void load(); } } }
     }
     function connect() {
@@ -55,7 +55,7 @@ export default function MemoryMap() {
       socket.onerror = () => socket?.close();
     }
     connect(); void load();
-    // Reconcilia mudanças externas e eventos perdidos, sem chamar APIs de modelos.
+    // Catches up with outside changes and missed events, without calling any model API.
     const interval = setInterval(() => { if (document.visibilityState === 'visible') void load(); }, 15_000);
     const visible = () => { if (document.visibilityState === 'visible') void load(); };
     document.addEventListener('visibilitychange', visible);
@@ -68,16 +68,16 @@ export default function MemoryMap() {
     const worker = new Worker(new URL('./projection.worker.ts', import.meta.url), { type: 'module' });
     worker.onmessage = (event: MessageEvent<{ projection?: Projection; error?: string }>) => {
       if (event.data.projection) { setProjection(event.data.projection); setProjecting(false); }
-      else { setError('Não foi possível projetar as memórias. Tente atualizar.'); setProjecting(false); }
+      else { setError('Could not project the memories. Try refreshing.'); setProjecting(false); }
     };
-    worker.onerror = () => { setError('Não foi possível iniciar a projeção.'); setProjecting(false); };
+    worker.onerror = () => { setError('Could not start the projection.'); setProjecting(false); };
     worker.postMessage({ items: snapshot.items });
     return () => worker.terminate();
   }, [snapshot]);
 
   const categories = useMemo(() => [...new Map((snapshot?.items ?? []).filter((item) => item.category)
-    .map((item) => [item.category!.key, item.category!])).values()].sort((a,b) => a.label.localeCompare(b.label,'pt-BR')), [snapshot]);
-  // Filtro só oculta pontos: não recalcula PCA nem muda a posição das memórias.
+    .map((item) => [item.category!.key, item.category!])).values()].sort((a,b) => a.label.localeCompare(b.label,'en')), [snapshot]);
+  // The filter only hides points: it does not recompute the PCA or move the memories.
   const visiblePoints = useMemo(() => projection.points.filter((point) => categoryFilter === 'all' || point.document.category?.key === categoryFilter), [projection,categoryFilter]);
   const selected = visiblePoints.find((point) => point.id === selectedId) ?? null;
   const neighbors = useMemo(() => selected ? visiblePoints.filter((point) => point.id !== selected.id)
@@ -85,37 +85,37 @@ export default function MemoryMap() {
     .sort((a, b) => b.similarity - a.similarity).slice(0, 3) : [], [visiblePoints, selected]);
   return <div className="memory-map">
     <header className="map-header"><a className="map-brand" href="/">talk<span>2</span>urself.</a>
-      <a href="/" target="_blank" rel="noreferrer">Abrir conversa ↗</a></header>
+      <a href="/" target="_blank" rel="noreferrer">Open the conversation ↗</a></header>
     <main>
-      <div className="map-intro"><div><p className="map-kicker">LABORATÓRIO DE MEMÓRIA · VECTORDBZ ADAPTADO</p>
-        <h1>O que fica da conversa.</h1><p>Cada ponto é um fato lembrado, com sua própria origem e seu embedding.</p></div>
-        <div className="map-sync"><span className={online && !error ? 'map-live' : ''} role="status">{online && !error ? '● Atualização ao vivo' : '○ Sincronização pendente'}</span>
-          <button onClick={() => setRefresh((v) => v + 1)}>Atualizar agora</button></div></div>
-      <div className="map-stats"><span><strong>{snapshot?.items.length ?? '—'}</strong> memórias exibidas</span><span><strong>1.536 → 3</strong> dimensões</span><span>PCA aproximada · vetores normalizados</span>
-        <span>{updatedAt ? `Consultado às ${updatedAt.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}` : 'Consultando banco…'}</span></div>
+      <div className="map-intro"><div><p className="map-kicker">MEMORY LAB · ADAPTED FROM VECTORDBZ</p>
+        <h1>What stays from the conversation.</h1><p>Each point is a remembered fact, with its own source and its own embedding.</p></div>
+        <div className="map-sync"><span className={online && !error ? 'map-live' : ''} role="status">{online && !error ? '● Live updates' : '○ Sync pending'}</span>
+          <button onClick={() => setRefresh((v) => v + 1)}>Refresh now</button></div></div>
+      <div className="map-stats"><span><strong>{snapshot?.items.length ?? '—'}</strong> memories shown</span><span><strong>1,536 → 3</strong> dimensions</span><span>Approximate PCA · normalised vectors</span>
+        <span>{updatedAt ? `Checked at ${updatedAt.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}` : 'Querying the database…'}</span></div>
       {error ? <p className="map-error" role="alert">{error}</p> : null}
-      {snapshot?.truncated ? <p>Exibindo as {snapshot.limit} memórias ativas mais recentes. As demais continuam no banco.</p> : null}
-      <div className="map-categories" aria-label="Categorias de memórias">
-        <button aria-pressed={categoryFilter === 'all'} onClick={() => setCategoryFilter('all')}>Todas · {projection.points.length}</button>
+      {snapshot?.truncated ? <p>Showing the {snapshot.limit} most recent active memories. The others stay in the database.</p> : null}
+      <div className="map-categories" aria-label="Memory categories">
+        <button aria-pressed={categoryFilter === 'all'} onClick={() => setCategoryFilter('all')}>All · {projection.points.length}</button>
         {categories.map((category) => <button key={category.key} aria-pressed={categoryFilter === category.key} onClick={() => setCategoryFilter(category.key)}>
           <span className="map-swatch" style={{backgroundColor:category.color}} aria-hidden="true" />{category.label} · {snapshot?.items.filter((item) => item.category?.key === category.key).length}</button>)}
       </div>
-      <div className="map-workspace"><section className="map-scene" aria-label="Visualização 3D">
-        <div className="map-scene-label"><span>MAPA DE SIGNIFICADOS</span><span>{projecting ? 'Recalculando projeção…' : 'Arraste para girar · role para ampliar'}</span></div>
+      <div className="map-workspace"><section className="map-scene" aria-label="3D view">
+        <div className="map-scene-label"><span>MAP OF MEANINGS</span><span>{projecting ? 'Recomputing the projection…' : 'Drag to rotate · scroll to zoom'}</span></div>
         {visiblePoints.length ? <PlotlyScatterView projectedPoints={visiblePoints} dimension={3} selectedPoint={selected} nearestNeighbors={neighbors}
           getPointColor={color} pointSize={7} onSelectPoint={(point) => setSelectedId(point.id)} theme="dark" />
-          : <div className="map-empty">{loading || projecting ? 'Preparando mapa…' : 'Suas memórias aparecerão aqui depois de serem salvas numa conversa.'}</div>}
-        <p className="map-legend"><span>Cor = categoria · um ponto por fato</span><span>{projection.points.length > 1 ? `${(projection.retainedVariance * 100).toFixed(1)}% da variância preservada` : 'Um ponto ainda não revela relações entre memórias.'}</span></p>
-      </section><aside className="map-inspector"><p className="map-kicker">MEMÓRIA EM FOCO</p>
-        {selected ? <><h2><span className="map-swatch" style={{backgroundColor:color(selected)}} aria-hidden="true" />{pointTopic(selected)}</h2><p className="map-value">{selected.document.value}</p><h3>Sua fala de origem</h3><blockquote>{selected.document.evidence}</blockquote>
-          <p>Salva em {new Date(selected.document.createdAt).toLocaleString('pt-BR')}.</p><h3>Mais similares neste conjunto</h3>
-          {neighbors.length ? neighbors.map(({ point, similarity }) => <button className="map-neighbor" key={point.id} onClick={() => setSelectedId(point.id)}>{point.document.value}<small>Similaridade cosseno: {similarity.toFixed(3)}</small></button>) : <p>Ainda não há outra memória para comparar.</p>}</>
-          : <><h2>Explore suas lembranças.</h2><p>Clique num ponto ou escolha uma memória na lista para ler o texto e a fala que a originou.</p></>}
+          : <div className="map-empty">{loading || projecting ? 'Preparing the map…' : 'Your memories will appear here once a conversation saves them.'}</div>}
+        <p className="map-legend"><span>Colour = category · one point per fact</span><span>{projection.points.length > 1 ? `${(projection.retainedVariance * 100).toFixed(1)}% of the variance preserved` : 'A single point does not show relations between memories yet.'}</span></p>
+      </section><aside className="map-inspector"><p className="map-kicker">MEMORY IN FOCUS</p>
+        {selected ? <><h2><span className="map-swatch" style={{backgroundColor:color(selected)}} aria-hidden="true" />{pointTopic(selected)}</h2><p className="map-value">{selected.document.value}</p><h3>What you said</h3><blockquote>{selected.document.evidence}</blockquote>
+          <p>Saved on {new Date(selected.document.createdAt).toLocaleString('en-US')}.</p><h3>Most similar in this set</h3>
+          {neighbors.length ? neighbors.map(({ point, similarity }) => <button className="map-neighbor" key={point.id} onClick={() => setSelectedId(point.id)}>{point.document.value}<small>Cosine similarity: {similarity.toFixed(3)}</small></button>) : <p>There is no other memory to compare yet.</p>}</>
+          : <><h2>Explore your memories.</h2><p>Click a point or pick a memory from the list to read it and what you said that created it.</p></>}
       </aside></div>
-      <section className="map-list" aria-label="Lista acessível de memórias"><h2>Memórias no mapa</h2>
+      <section className="map-list" aria-label="Accessible list of memories"><h2>Memories on the map</h2>
         {visiblePoints.map((point) => <button key={point.id} aria-pressed={selectedId === point.id} onClick={() => setSelectedId(point.id)}><small><span className="map-swatch" style={{backgroundColor:color(point)}} aria-hidden="true" />{pointTopic(point)}</small>{point.document.value}</button>)}</section>
-      <p className="map-note">A projeção 3D é uma aproximação: pontos próximos não garantem equivalência de significado. A similaridade usa os 1.536 valores originais. Novas memórias podem mudar a posição dos pontos; correções substituem a versão ativa.</p>
-      <p className="map-note">Categorias são classificadas automaticamente, reaproveitando assuntos existentes. Cores de novas categorias são aproximadas a assuntos relacionados em OKLab e mantidas estáveis. A cor não mede a distância entre dois fatos; use as similaridades originais para comparar memórias.</p>
-    </main><footer>Visualização adaptada do componente aberto do VectorDBZ · <a href="/vectordbz-license.txt" target="_blank" rel="noreferrer">Licença MIT</a> · <a href="/plotly-license.txt" target="_blank" rel="noreferrer">Plotly</a> · Leituras do banco não geram voz nem novos embeddings.</footer>
+      <p className="map-note">The 3D projection is an approximation: nearby points do not guarantee the same meaning. Similarity uses the original 1,536 values. New memories may move the points; corrections replace the active version.</p>
+      <p className="map-note">Categories are assigned automatically, reusing existing subjects. Colours of new categories are matched to related subjects in OKLab and kept stable. Colour does not measure the distance between two facts; use the original similarities to compare memories.</p>
+    </main><footer>View adapted from the open VectorDBZ component · <a href="/vectordbz-license.txt" target="_blank" rel="noreferrer">MIT license</a> · <a href="/plotly-license.txt" target="_blank" rel="noreferrer">Plotly</a> · Reading the database creates no voice and no new embeddings.</footer>
   </div>;
 }

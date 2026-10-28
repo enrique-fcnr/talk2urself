@@ -11,7 +11,7 @@ export function projectMemories(items: VectorMemory[]): Projection {
   if (!items.length) return { points: [], retainedVariance: 0 };
   const dimensions = items[0].embedding.length;
   const normalized = items.map(({ embedding }) => {
-    if (embedding.length !== dimensions || embedding.some((v) => !Number.isFinite(v))) throw new Error('Vetor inválido.');
+    if (embedding.length !== dimensions || embedding.some((v) => !Number.isFinite(v))) throw new Error('Invalid vector.');
     const norm = Math.hypot(...embedding);
     return embedding.map((v) => norm ? v / norm : 0);
   });

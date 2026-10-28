@@ -18,7 +18,7 @@ const types: Record<string, string> = { '.html': 'text/html; charset=utf-8', '.j
 export function registerWeb(app: FastifyInstance, root: string) {
   app.get('/*', async (request, reply) => {
     const route = decodeURIComponent(request.url.split('?')[0]);
-    if (route.startsWith('/api/') || route.startsWith('/ws')) return reply.code(404).send({ error: 'Não encontrado.' });
+    if (route.startsWith('/api/') || route.startsWith('/ws')) return reply.code(404).send({ error: 'Not found.' });
     const file = path.resolve(root, '.' + route);
     let target = path.join(root, 'index.html');
     if (file.startsWith(root + path.sep)) {
