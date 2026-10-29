@@ -10,7 +10,7 @@ import logoDark from './brand/logo-dark.png';
 const Avatar3D = lazy(() => import('./avatar/Avatar3D'));
 const BrainView = lazy(() => import('./brain/BrainView'));
 // Start screen: "a smarter version of you", with the adjective cycling.
-const adjectives = ['smarter', 'wiser', 'more creative', 'braver', 'calmer', 'more curious', 'more confident', 'kinder', 'more focused', 'bolder'];
+const adjectives = ['smarter', 'wiser', 'sharper', 'bolder', 'braver', 'calmer', 'truer', 'better'];
 const wordSeconds = 2.2, exitSeconds = .65, toastSeconds = 6;
 // Small promises under the headline, and a plain note about the microphone before the browser asks for it.
 const promises = ['Natural voice', 'Remembers you', 'Reacts like a person'];
