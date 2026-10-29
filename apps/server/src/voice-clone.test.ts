@@ -69,8 +69,9 @@ test('clones at the thresholds, re-clones twice, then freezes keeping only the f
   const cloner = createVoiceCloner({ cartesiaKey: 'k', storageUrl: 'https://x.supabase.co', secret: 's', userId: 'user' }, services.fetcher, () => {});
   const take = writeWav(speech(20));
   assert.equal(cloner.voiceId(), undefined);
-  // The original voice is the default; until "My voice" is chosen nothing is collected.
-  assert.equal(cloner.status().ownVoice, false);
+  // "Minha voz" is on by default; with it turned off nothing is collected.
+  assert.equal(cloner.status().ownVoice, true);
+  await cloner.choose(false, AbortSignal.timeout(5000));
   assert.equal((await cloner.addTake(take, AbortSignal.timeout(5000))).accepted, false);
   await cloner.choose(true, AbortSignal.timeout(5000));
   let clonedAt: number[] = [];
@@ -139,7 +140,6 @@ test('quem começa em inglês ouve a própria voz também em português até o c
   const cloner = createVoiceCloner({ cartesiaKey: 'k', storageUrl: 'https://x.supabase.co', secret: 's', userId: 'user' }, services.fetcher, () => {});
   const take = writeWav(speech(20));
   assert.equal(cloner.voiceId('pt'), undefined, 'No clone yet: the default voice.');
-  await cloner.choose(true, AbortSignal.timeout(5000));
   for (let i = 0; i < 3; i++) await cloner.addTake(take, AbortSignal.timeout(5000), 'en');
   assert.equal(cloner.voiceId('en'), 'voice-1');
   assert.equal(cloner.voiceId('pt'), 'voice-1', 'Portuguese borrows the English clone.');

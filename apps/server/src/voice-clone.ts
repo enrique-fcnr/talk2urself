@@ -29,8 +29,8 @@ export type Track = { voiceId?: string; collectedSeconds: number; clones: number
 // The top-level track is Portuguese (as saved before English existed); english is the second one.
 export type CloneState = Track & { ownVoice?: boolean; english: Track; updatedAt?: string };
 const emptyTrack = (): Track => ({ collectedSeconds: 0, clones: 0, frozen: false, takes: [] });
-// Kelly speaks with the original voice until the user chooses "My voice".
-export const emptyState = (): CloneState => ({ ...emptyTrack(), ownVoice: false, english: emptyTrack() });
+// "Minha voz" is on unless the user turned it off.
+export const emptyState = (): CloneState => ({ ...emptyTrack(), ownVoice: true, english: emptyTrack() });
 export type TrackStatus = { collecting: boolean; cloned: boolean; frozen: boolean; clones: number; collectedSeconds: number; nextAt: number | null };
 export type CloneStatus = { enabled: boolean; ownVoice: boolean } & TrackStatus & { english: TrackStatus };
 
@@ -203,7 +203,7 @@ export function createVoiceCloner(config: VoiceCloneConfig, fetcher: typeof fetc
           const takes = (value: unknown) => Array.isArray(value) ? value.filter((take): take is Take =>
             typeof take?.path === 'string' && typeof take.seconds === 'number' && typeof take.score === 'number') : [];
           const english = (parsed.english ?? {}) as Partial<Track>;
-          state = { ...emptyState(), ...parsed, ownVoice: parsed.ownVoice === true, takes: takes(parsed.takes), english: { ...emptyTrack(), ...english, takes: takes(english.takes) } };
+          state = { ...emptyState(), ...parsed, ownVoice: parsed.ownVoice !== false, takes: takes(parsed.takes), english: { ...emptyTrack(), ...english, takes: takes(english.takes) } };
         }
       } catch { loaded = undefined; log('Clonagem de voz: não foi possível ler o estado salvo; nova tentativa no próximo uso.'); throw new Error('Clonagem de voz: armazenamento indisponível.'); }
     })();
