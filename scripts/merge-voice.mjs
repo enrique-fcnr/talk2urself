@@ -54,33 +54,51 @@ stretches.sort((a, b) => a.at - b.at);
 // The picture's change from frame to frame, at the video's own rate (up to 60 a second).
 const [num, den] = (probe.streams.find((stream) => stream.codec_type === 'video')?.avg_frame_rate || '30/1').split('/').map(Number);
 const fps = Math.min(60, Math.round(num / (den || 1)) || 30), step = 1000 / fps;
-const motion = [];
-const run = spawnSync('ffmpeg', ['-v', 'error', '-i', video, '-an', '-vf', `fps=${fps},scale=180:-2,format=gray,tblend=all_mode=difference,signalstats,metadata=print:key=lavfi.signalstats.YAVG:file=-`, '-f', 'null', '-'], { encoding: 'utf8', maxBuffer: 1 << 28 });
-for (const match of run.stdout.matchAll(/YAVG=([\d.]+)/g)) motion.push(Number(match[1]));
-if (!motion.length) { console.error('Não foi possível ler o movimento do vídeo.', run.stderr); process.exit(1); }
+function changes(crop) {
+  const run = spawnSync('ffmpeg', ['-v', 'error', '-i', video, '-an', '-vf', `fps=${fps},${crop}scale=180:-2,format=gray,tblend=all_mode=difference,signalstats,metadata=print:key=lavfi.signalstats.YAVG:file=-`, '-f', 'null', '-'], { encoding: 'utf8', maxBuffer: 1 << 28 });
+  const values = [...run.stdout.matchAll(/YAVG=([\d.]+)/g)].map((match) => Number(match[1]));
+  if (!values.length) { console.error('Não foi possível ler o movimento do vídeo.', run.stderr); process.exit(1); }
+  return values;
+}
+// The whole picture, and the caption line near the top (on a phone), which only moves while the clone speaks.
+const motion = changes(''), captions = changes('crop=iw:ih*.14:0:ih*.18,');
 const window = startOption || Number.isFinite(createdAt) ? 30_000 : 120_000;
 
 // Where the video starts. First choice: the big changes on screen the page noted (waking, sleeping, the memories),
 // found again as the first frame of a sudden change. Each pairing of a mark with such a frame proposes a start; the one
-// that lines up the most marks wins.
+// that lines up the most marks (and leaves the fewest marks inside the video unexplained) wins.
 const sorted = [...motion].sort((a, b) => a - b), median = sorted[Math.floor(sorted.length / 2)];
-const sharp = Math.max(6, median * 8), onsets = [];
-for (let k = 1; k < motion.length; k++) if (motion[k] >= sharp && motion[k - 1] < sharp / 2) onsets.push(k * step);
+// A sudden change rises well above the usual movement (the iPhone fades its screens in a few frames); its first frame
+// is where it rose from the calm before it. Its weight is all the change in the next 0.6 s: a screen leaving moves a
+// lot for many frames, a flash only for one or two.
+const sharp = Math.max(2, median * 6), onsets = [];
+for (let k = 1; k < motion.length - 1; k++) {
+  if (motion[k] < sharp || motion[k] < motion[k - 1] || motion[k] < motion[k + 1]) continue;
+  let first = k;
+  while (first > 0 && motion[first - 1] > Math.max(median * 2, motion[k] * .25)) first--;
+  const weight = motion.slice(first, first + Math.round(600 / step)).reduce((sum, value) => sum + value, 0);
+  if (!onsets.length || first * step - onsets.at(-1).time > 300) onsets.push({ time: first * step, weight });
+}
 let best;
 for (const anchor of anchors) for (const mark of marks) for (const onset of onsets) {
-  const start = mark.at - onset;
+  const start = mark.at - onset.time;
   if (Math.abs(start - anchor) > window) continue;
-  const matched = marks.filter((other) => onsets.some((time) => Math.abs(other.at - start - time) <= 2 * step));
-  if (!best || matched.length > best.matched.length) best = { start, matched };
+  const hits = onsets.filter((other) => marks.some((each) => Math.abs(each.at - start - other.time) <= 3 * step));
+  const matched = marks.filter((each) => hits.some((other) => Math.abs(each.at - start - other.time) <= 3 * step));
+  // Marks that fall inside the video but show no change count against this start.
+  const missed = marks.filter((each) => each.at >= start && each.at <= start + duration * 1000).length - matched.length;
+  const value = matched.length - missed, weight = hits.reduce((sum, other) => sum + other.weight, 0);
+  // Equally good on the marks (one mark can pair with any change): the biggest changes win.
+  if (!best || value > best.value || value === best.value && weight > best.weight) best = { start, matched, value, weight };
 }
 let start;
 if (best) {
   start = best.start;
   console.log(`Início do vídeo: ${new Date(start).toISOString()}, pelas mudanças de tela (${best.matched.map((mark) => mark.what).join(', ')}).`);
 } else {
-  // Otherwise: the moment that best lines up "voice playing" with "picture moving", near the anchors (less exact).
-  const n = motion.length, mean = motion.reduce((sum, value) => sum + value, 0) / n;
-  const spread = Math.sqrt(motion.reduce((sum, value) => sum + (value - mean) ** 2, 0) / n) || 1;
+  // Otherwise: the moment that best lines up "voice playing" with the captions moving, near the anchors (less exact).
+  const n = captions.length, mean = captions.reduce((sum, value) => sum + value, 0) / n;
+  const spread = Math.sqrt(captions.reduce((sum, value) => sum + (value - mean) ** 2, 0) / n) || 1;
   let found = { start: anchors[0], value: -Infinity };
   for (const anchor of anchors) {
     const from = anchor - window, length = Math.ceil(2 * window / step) + n + 1, voice = new Uint8Array(length);
@@ -90,7 +108,7 @@ if (best) {
     }
     for (let shift = 0; shift + n <= length && shift * step <= 2 * window; shift++) {
       let on = 0, sum = 0;
-      for (let k = 0; k < n; k++) if (voice[shift + k]) { on++; sum += motion[k]; }
+      for (let k = 0; k < n; k++) if (voice[shift + k]) { on++; sum += captions[k]; }
       const share = on / n, value = on && on < n ? (sum / on - mean) / spread * Math.sqrt(share / (1 - share)) : 0;
       if (value > found.value) found = { start: from + shift * step, value };
     }
