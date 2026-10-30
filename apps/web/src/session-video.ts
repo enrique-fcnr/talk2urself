@@ -9,16 +9,157 @@ let listener: Listener | null = null;
 // Called by the avatar after every render, while its drawing buffer still holds the frame.
 export function frameRendered(avatar: HTMLCanvasElement) { listener?.(avatar); }
 
-// stop() gives the video, or the reason there is none (the recorder failed, or nothing was recorded).
-export type SessionVideo = { stop(): Promise<{ blob: Blob } | { error: string }>; readonly fps: number };
+// stop() gives the video, or the reason there is none (the recorder failed, or nothing was recorded). limit: the longest
+// safe recording in seconds, when the video has to be kept in memory.
+type Result = { blob: Blob } | { error: string };
+export type SessionVideo = { stop(): Promise<Result>; readonly fps: number; readonly limit: number | null };
+// The clone's voice: as a stream (for MediaRecorder), or as raw samples while it plays (for the encoder).
+export type VoiceCapture = { stream(): MediaStream; tap(listener: ((samples: Float32Array, rate: number) => void) | null): void };
 const types = ['video/mp4;codecs=avc1.640028,mp4a.40.2', 'video/mp4', 'video/webm;codecs=vp9,opus', 'video/webm'];
 export const videoSupported = () => typeof MediaRecorder !== 'undefined' && 'captureStream' in HTMLCanvasElement.prototype;
 export const videoExtension = (blob: Blob) => blob.type.includes('mp4') ? 'mp4' : 'webm';
 
+// How each drawn frame becomes a file.
+type Backend = { frame(fps: number): void; stop(): Promise<Result>; limit: number | null };
+type Chunk = { type: 'write'; data: Uint8Array<ArrayBuffer>; position: number };
+
+// The video's file in the site's private storage on the device, written by a worker as it is encoded, so memory stays
+// small however long the recording. Null where the device cannot do it.
+const fileName = 'session-video.mp4';
+async function diskFile(): Promise<{ writable: WritableStream<Chunk>; done(): Promise<File> } | null> {
+  if (!navigator.storage?.getDirectory || typeof Worker === 'undefined') return null;
+  const worker = new Worker(new URL('./video-file.worker.ts', import.meta.url), { type: 'module' });
+  type Reply = { ready?: true; closed?: true; error?: string };
+  let failure = '', waiting: ((reply: Reply) => void) | undefined;
+  worker.onmessage = (event: MessageEvent<Reply>) => { if (event.data.error) failure ||= event.data.error; waiting?.(event.data); };
+  worker.onerror = () => { failure ||= 'could not write the video'; waiting?.({ error: failure }); };
+  const ask = (message: object, wait: number) => new Promise<Reply>((resolve) => {
+    waiting = resolve; worker.postMessage(message);
+    setTimeout(() => resolve({ error: 'the video file did not answer' }), wait);
+  });
+  if (!(await ask({ open: fileName }, 3000)).ready) { worker.terminate(); return null; }
+  return {
+    writable: new WritableStream<Chunk>({
+      write(chunk) {
+        if (failure) throw new Error(failure);
+        const data = chunk.data.slice();
+        worker.postMessage({ data, position: chunk.position }, [data.buffer]);
+      },
+    }),
+    async done() {
+      const reply = await ask({ close: true }, 60_000);
+      worker.terminate();
+      if (failure || !reply.closed) throw new Error(failure || reply.error || 'could not write the video');
+      return (await (await navigator.storage.getDirectory()).getFileHandle(fileName)).getFile();
+    },
+  };
+}
+// The file is only needed until the video is saved or discarded.
+export async function forgetVideoFile() {
+  try { await (await navigator.storage.getDirectory()).removeEntry(fileName); } catch { /* Nothing to remove. */ }
+}
+
+// WebCodecs, where the phone has it: each frame keeps the moment it was drawn and the file is a plain MP4.
+// MediaRecorder on the iPhone writes a fragmented MP4 instead, which Photos shows with the wrong length and, past a
+// few minutes, plays frozen or as sound only.
+async function encoded(canvas: HTMLCanvasElement, voice: VoiceCapture): Promise<Backend | null> {
+  if (typeof VideoEncoder === 'undefined' || typeof AudioEncoder === 'undefined') return null;
+  const { Output, Mp4OutputFormat, BufferTarget, StreamTarget, CanvasSource, AudioSampleSource, AudioSample, Quality, canEncodeVideo, canEncodeAudio } = await import('mediabunny');
+  const video = { codec: 'avc' as const, quality: new Quality({ bitrate: 8_000_000 }), keyFrameInterval: 1 };
+  const audio = { codec: 'aac' as const, quality: new Quality({ bitrate: 160_000 }) };
+  const [videoOk, audioOk] = await Promise.all([
+    canEncodeVideo('avc', { width: canvas.width, height: canvas.height, quality: video.quality }),
+    canEncodeAudio('aac', { numberOfChannels: 1, sampleRate: 48_000, quality: audio.quality }),
+  ]);
+  if (!videoOk || !audioOk) return null;
+
+  // On disk the index goes at the end of the file (Photos reads it there just as well); in memory it goes up front.
+  await forgetVideoFile();
+  const disk = await diskFile().catch(() => null);
+  const output = disk
+    ? new Output({ format: new Mp4OutputFormat({ fastStart: false }), target: new StreamTarget(disk.writable, { chunked: true, chunkSize: 4 << 20 }) })
+    : new Output({ format: new Mp4OutputFormat({ fastStart: 'in-memory' }), target: new BufferTarget() });
+  const frames = new CanvasSource(canvas, video), sound = new AudioSampleSource(audio);
+  output.addVideoTrack(frames, { frameRate: 60 });
+  output.addAudioTrack(sound);
+  await output.start();
+
+  const began = performance.now();
+  let failure = '', pending = 0, heard = -1;
+  const fail = (error: unknown) => { failure ||= error instanceof Error ? error.message : 'the encoder stopped'; };
+  function add(data: Float32Array, rate: number) {
+    const sample = new AudioSample({ data, format: 'f32', numberOfChannels: 1, sampleRate: rate, timestamp: heard });
+    heard += data.length / rate;
+    sound.add(sample).catch(fail).finally(() => sample.close());
+  }
+  // The voice runs on its own sample clock, from where the video was when the first samples arrived. After a pause
+  // (a call, the screen locked) it is put back in step: the gap is filled with silence, and samples that would run
+  // ahead of the video are left out.
+  voice.tap((samples, rate) => {
+    if (failure) return;
+    const now = (performance.now() - began) / 1000 - samples.length / rate;
+    if (heard < 0) heard = Math.max(0, now);
+    if (heard - now > .25) return;
+    while (now - heard > .25) add(new Float32Array(Math.round(Math.min(1, now - heard) * rate)), rate);
+    add(samples, rate);
+  });
+  return {
+    // Kept in memory, about 60 MB a minute: past 8 minutes Safari may reload the page and lose it all.
+    limit: disk ? null : 8 * 60,
+    // The frame is copied right away; while the encoder is a few frames behind, new ones are dropped. Each frame keeps
+    // its own time, so dropping never makes the video drift from the voice.
+    frame(fps) {
+      if (pending >= 4 || failure) return;
+      pending++;
+      frames.add((performance.now() - began) / 1000, 1 / fps).catch(fail).finally(() => { pending--; });
+    },
+    async stop() {
+      voice.tap(null);
+      try {
+        if (failure) throw new Error(failure);
+        await output.finalize();
+        if (disk) return { blob: await disk.done() };
+        const buffer = (output.target as InstanceType<typeof BufferTarget>).buffer;
+        return buffer ? { blob: new Blob([buffer], { type: 'video/mp4' }) } : { error: 'nothing was recorded' };
+      } catch (error) {
+        void output.cancel().catch(() => {});
+        return { error: error instanceof Error ? error.message : 'the encoder stopped' };
+      }
+    },
+  };
+}
+
+// MediaRecorder, for browsers without WebCodecs: the canvas and the voice as streams.
+function recorded(canvas: HTMLCanvasElement, voice: VoiceCapture): Backend {
+  const stream = canvas.captureStream(60);
+  for (const track of voice.stream().getAudioTracks()) stream.addTrack(track);
+  const type = types.find((candidate) => MediaRecorder.isTypeSupported(candidate));
+  const recorder = new MediaRecorder(stream, { ...(type ? { mimeType: type } : {}), videoBitsPerSecond: 14_000_000, audioBitsPerSecond: 160_000 });
+  const chunks: Blob[] = [];
+  let failure = '';
+  recorder.ondataavailable = (event) => { if (event.data.size) chunks.push(event.data); };
+  recorder.onerror = (event) => { failure ||= (event as Event & { error?: DOMException }).error?.message || 'the recorder stopped'; };
+  recorder.start(1000);
+  return {
+    limit: null,
+    frame() { /* captureStream picks up every redraw by itself. */ },
+    // Whatever was recorded is kept, even if the recorder stopped early.
+    stop: () => new Promise((resolve) => {
+      const finish = () => {
+        for (const track of stream.getVideoTracks()) track.stop();
+        resolve(chunks.length ? { blob: new Blob(chunks, { type: recorder.mimeType || type || 'video/mp4' }) } : { error: failure || 'nothing was recorded' });
+      };
+      if (recorder.state === 'inactive') return finish();
+      recorder.onstop = finish;
+      try { recorder.requestData(); recorder.stop(); } catch { finish(); }
+    }),
+  };
+}
+
 // The bust fade from the stylesheet (an S-curve from fully clear to solid), as [alpha, position 0..1] stops.
 const bustStops = [[0, 0], [.028, .1], [.104, .2], [.242, .32], [.425, .45], [.619, .58], [.784, .7], [.914, .82], [.982, .92], [1, 1]] as const;
 
-export function startSessionVideo(voice: MediaStream | null): SessionVideo {
+export async function startSessionVideo(voice: VoiceCapture): Promise<SessionVideo> {
   const width = innerWidth, height = innerHeight, scale = Math.min(devicePixelRatio || 1, 1080 / width);
   const even = (value: number) => Math.max(2, Math.round(value / 2) * 2);
   const canvas = document.createElement('canvas'), layer = document.createElement('canvas');
@@ -26,29 +167,27 @@ export function startSessionVideo(voice: MediaStream | null): SessionVideo {
   const sx = canvas.width / width, sy = canvas.height / height;
   const ctx = canvas.getContext('2d', { alpha: false })!, lay = layer.getContext('2d')!;
 
-  const stream = canvas.captureStream(60);
-  for (const track of voice?.getAudioTracks() ?? []) stream.addTrack(track);
-  const type = types.find((candidate) => MediaRecorder.isTypeSupported(candidate));
-  const recorder = new MediaRecorder(stream, { ...(type ? { mimeType: type } : {}), videoBitsPerSecond: 14_000_000, audioBitsPerSecond: 160_000 });
-  const chunks: Blob[] = [];
-  let failure = '';
-  recorder.ondataavailable = (event) => { if (event.data.size) chunks.push(event.data); };
-  recorder.onerror = (event) => { failure ||= (event as Event & { error?: DOMException }).error?.message || 'the recorder stopped'; };
+  const backend = await encoded(canvas, voice).catch(() => null) ?? recorded(canvas, voice);
 
-  let fps = 60, last = 0, began = 0, measured = 0, measuredSince = 0;
+  let fps = 60, last = 0, began = 0, measured = 0, measuredSince = 0, slow = 0;
   const app = document.querySelector<HTMLElement>('.app');
   listener = (avatar) => {
     const now = performance.now();
     // Draw no faster than the target rate (a 120 Hz screen still gives 60).
     if (last && now - last < 1000 / fps - 3) return;
     last = now; began ||= now;
-    // After a second to settle, count a second of frames: below about 50, settle on 30 for the rest of the video.
+    // After a second to settle, count frames each second: three slow seconds in a row (below about 50) settle on 30 for
+    // the rest of the video. One hiccup does not, nor does a pause with the page hidden.
     if (fps === 60 && now - began > 1000) {
       if (!measuredSince) measuredSince = now;
       measured++;
-      if (now - measuredSince >= 1000) { if (measured < 50) fps = 30; measured = 0; measuredSince = now; }
+      if (now - measuredSince >= 1000) {
+        if (now - measuredSince < 1500) slow = measured < 50 ? slow + 1 : 0;
+        if (slow >= 3) fps = 30;
+        measured = 0; measuredSince = now;
+      }
     }
-    try { compose(avatar); } catch { /* A frame that cannot be drawn is skipped. */ }
+    try { compose(avatar); backend.frame(fps); } catch { /* A frame that cannot be drawn is skipped. */ }
   };
 
   function rect(element: Element) {
@@ -236,19 +375,9 @@ export function startSessionVideo(voice: MediaStream | null): SessionVideo {
     ctx.globalAlpha = 1;
   }
 
-  recorder.start(1000);
   return {
     get fps() { return fps; },
-    // Whatever was recorded is kept, even if the recorder stopped early.
-    stop: () => new Promise((resolve) => {
-      listener = null;
-      const finish = () => {
-        for (const track of stream.getVideoTracks()) track.stop();
-        resolve(chunks.length ? { blob: new Blob(chunks, { type: recorder.mimeType || type || 'video/mp4' }) } : { error: failure || 'nothing was recorded' });
-      };
-      if (recorder.state === 'inactive') return finish();
-      recorder.onstop = finish;
-      try { recorder.requestData(); recorder.stop(); } catch { finish(); }
-    }),
+    limit: backend.limit,
+    stop() { listener = null; return backend.stop(); },
   };
 }

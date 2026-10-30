@@ -16,6 +16,7 @@ export function createSpeechPlayer(events: Events) {
   let context: AudioContext | undefined, segments = new Map<number, Segment>(), receiving: Segment | undefined;
   // Every segment plays through one output node, so the clone's voice (and nothing else) can also be recorded.
   let output: GainNode | undefined, capture: MediaStreamAudioDestinationNode | undefined;
+  let tap: ScriptProcessorNode | undefined, tapped: ((samples: Float32Array, rate: number) => void) | null = null;
   let count: number | undefined, ticker: ReturnType<typeof setInterval> | undefined, showing: Segment | undefined, finished = false;
 
   // Inside a tap: browsers only let audio start after a gesture. A silent buffer also wakes iOS's audio.
@@ -113,12 +114,26 @@ export function createSpeechPlayer(events: Events) {
     if (notify) finished = true;
     events.onPlayback(null); events.onBlocked(false);
   }
-  // The clone's voice as a stream, for recording a video of the conversation. Call inside a tap (it may create the audio).
-  function voiceStream() {
+  // The clone's voice, for recording a video of the conversation: as a stream, or as samples while it plays.
+  // Call inside a tap (it may create the audio).
+  function voiceCapture() {
     unlock();
-    if (!capture) { capture = context!.createMediaStreamDestination(); output!.connect(capture); }
-    return capture.stream;
+    return {
+      stream() {
+        if (!capture) { capture = context!.createMediaStreamDestination(); output!.connect(capture); }
+        return capture.stream;
+      },
+      tap(listener: ((samples: Float32Array, rate: number) => void) | null) {
+        tapped = listener;
+        if (tap || !listener) return;
+        // A muted branch to the speakers keeps the processor running; silence is passed on too, so the track stays whole.
+        tap = context!.createScriptProcessor(4096, 1, 1);
+        const mute = context!.createGain(); mute.gain.value = 0;
+        output!.connect(tap); tap.connect(mute); mute.connect(context!.destination);
+        tap.onaudioprocess = (event) => tapped?.(event.inputBuffer.getChannelData(0).slice(), event.inputBuffer.sampleRate);
+      },
+    };
   }
   async function resume() { if (context) await context.resume().catch(() => {}); }
-  return { unlock, begin, chunk, done, end, heard, stop, resume, voiceStream };
+  return { unlock, begin, chunk, done, end, heard, stop, resume, voiceCapture };
 }

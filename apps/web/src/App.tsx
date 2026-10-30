@@ -2,7 +2,7 @@ import { lazy, Suspense, useCallback, useEffect, useRef, useState, type MouseEve
 import { useConversation } from './useConversation';
 import type { BrainProbe } from './avatar/kelly';
 import Captions from './Captions';
-import { startSessionVideo, videoExtension, videoSupported, type SessionVideo } from './session-video';
+import { forgetVideoFile, startSessionVideo, videoExtension, videoSupported, type SessionVideo } from './session-video';
 import SettingsPage from './SettingsPage';
 // The logo: dark letters on the light theme, light letters on the dark one (the 2 stays purple). Both load up
 // front and CSS shows the one for the theme, so switching themes swaps it at once.
@@ -28,7 +28,7 @@ function Icon({ name }: { name: 'mic' | 'sun' | 'moon' | 'pause' | 'close' | 'pl
   </svg>;
 }
 export default function App() {
-  const { voiceClone, redoVoice, chooseVoice, state, connection, mode, text, transcript, error, send, waking, recording, starting, submitting, needsPlayback, recall, playbackRef, unlockAudio, playAnswer, micLevel, voiceStream, openMicrophoneNow } = useConversation();
+  const { voiceClone, redoVoice, chooseVoice, state, connection, mode, text, transcript, error, send, waking, recording, starting, submitting, needsPlayback, recall, playbackRef, unlockAudio, playAnswer, micLevel, voiceCapture, openMicrophoneNow } = useConversation();
   // Tapping the violet look's brain opens the memories inside it, growing out of the spot that was tapped.
   const brainProbe = useRef<BrainProbe | null>(null), brainLocator = useRef<(() => { x: number; y: number } | null) | null>(null), subjectTop = useRef<(() => number | null) | null>(null);
   const experience = useRef<HTMLElement>(null);
@@ -82,9 +82,9 @@ export default function App() {
   async function startVideo() {
     if (video.current || videoStarting.current) return;
     videoStarting.current = true; setSavedVideo(null); setVideoError('');
-    const voice = voiceStream();
+    const voice = voiceCapture();
     try { await openMicrophoneNow(); } catch { /* The conversation asks again when it starts. */ }
-    try { video.current = startSessionVideo(voice); videoAwake.current = false; setVideoSince(Date.now()); }
+    try { video.current = await startSessionVideo(voice); videoAwake.current = false; setVideoSince(Date.now()); }
     catch (error) { setVideoError(`Could not start recording: ${error instanceof Error ? error.message : 'unknown error'}.`); }
     videoStarting.current = false;
   }
@@ -102,7 +102,7 @@ export default function App() {
     if (!file) return;
     // On the phone the share sheet saves it to Photos or Files; elsewhere it downloads.
     if (navigator.canShare?.({ files: [file] })) {
-      try { await navigator.share({ files: [file] }); setSavedVideo(null); } catch { /* Cancelled: the video stays offered. */ }
+      try { await navigator.share({ files: [file] }); setSavedVideo(null); void forgetVideoFile(); } catch { /* Cancelled: the video stays offered. */ }
       return;
     }
     const link = document.createElement('a'), url = URL.createObjectURL(file);
@@ -111,7 +111,12 @@ export default function App() {
   }
   useEffect(() => {
     if (videoSince === null) return;
-    const timer = setInterval(() => setVideoClock(Date.now() - videoSince), 250);
+    const timer = setInterval(() => {
+      setVideoClock(Date.now() - videoSince);
+      // A video kept in memory stops (and is offered) before it grows too big for the phone.
+      const limit = video.current?.limit;
+      if (limit && Date.now() - videoSince >= limit * 1000) void stopVideo();
+    }, 250);
     return () => clearInterval(timer);
   }, [videoSince]);
   const [started, setStarted] = useState(false), [leaving, setLeaving] = useState(false), [wordIndex, setWordIndex] = useState(0);
@@ -284,7 +289,7 @@ export default function App() {
       {savedVideo ? <div className="video-ready" role="dialog" aria-label="Recording ready">
         <span>Recording ready</span>
         <button className="video-save" onClick={() => void saveVideo()}>Save video</button>
-        <button className="video-discard" onClick={() => setSavedVideo(null)}>Discard</button>
+        <button className="video-discard" onClick={() => { setSavedVideo(null); void forgetVideoFile(); }}>Discard</button>
       </div> : null}
       {videoError ? <div className="video-ready" role="alert">
         <span>{videoError}</span>
