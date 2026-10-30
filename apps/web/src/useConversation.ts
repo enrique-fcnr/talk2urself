@@ -84,6 +84,8 @@ export function useConversation() {
   }
   async function playAnswer() { await player.current!.resume(); }
   const voiceStream = () => player.current!.voiceStream();
+  // Opens the microphone ahead of the conversation (a video recording starts only once it is open).
+  const openMicrophoneNow = () => microphoneStream();
 
   useEffect(() => {
     let disposed = false;
@@ -237,5 +239,5 @@ export function useConversation() {
     if (!status) throw new Error('Could not change the voice right now. Try again.');
     cloneRef.current = status; setVoiceClone(status);
   }
-  return { voiceClone, redoVoice, chooseVoice, state, connection, mode, model, text, transcript, error, send, waking, recording, starting, submitting, needsPlayback, usage, recall, playbackRef, unlockAudio, playAnswer, micLevel, voiceStream };
+  return { voiceClone, redoVoice, chooseVoice, state, connection, mode, model, text, transcript, error, send, waking, recording, starting, submitting, needsPlayback, usage, recall, playbackRef, unlockAudio, playAnswer, micLevel, voiceStream, openMicrophoneNow };
 }

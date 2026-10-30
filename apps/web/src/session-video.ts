@@ -9,7 +9,8 @@ let listener: Listener | null = null;
 // Called by the avatar after every render, while its drawing buffer still holds the frame.
 export function frameRendered(avatar: HTMLCanvasElement) { listener?.(avatar); }
 
-export type SessionVideo = { stop(): Promise<Blob | null>; readonly fps: number };
+// stop() gives the video, or the reason there is none (the recorder failed, or nothing was recorded).
+export type SessionVideo = { stop(): Promise<{ blob: Blob } | { error: string }>; readonly fps: number };
 const types = ['video/mp4;codecs=avc1.640028,mp4a.40.2', 'video/mp4', 'video/webm;codecs=vp9,opus', 'video/webm'];
 export const videoSupported = () => typeof MediaRecorder !== 'undefined' && 'captureStream' in HTMLCanvasElement.prototype;
 export const videoExtension = (blob: Blob) => blob.type.includes('mp4') ? 'mp4' : 'webm';
@@ -30,7 +31,9 @@ export function startSessionVideo(voice: MediaStream | null): SessionVideo {
   const type = types.find((candidate) => MediaRecorder.isTypeSupported(candidate));
   const recorder = new MediaRecorder(stream, { ...(type ? { mimeType: type } : {}), videoBitsPerSecond: 14_000_000, audioBitsPerSecond: 160_000 });
   const chunks: Blob[] = [];
+  let failure = '';
   recorder.ondataavailable = (event) => { if (event.data.size) chunks.push(event.data); };
+  recorder.onerror = (event) => { failure ||= (event as Event & { error?: DOMException }).error?.message || 'the recorder stopped'; };
 
   let fps = 60, last = 0, began = 0, measured = 0, measuredSince = 0;
   const app = document.querySelector<HTMLElement>('.app');
@@ -236,11 +239,16 @@ export function startSessionVideo(voice: MediaStream | null): SessionVideo {
   recorder.start(1000);
   return {
     get fps() { return fps; },
-    stop: () => new Promise<Blob | null>((resolve) => {
+    // Whatever was recorded is kept, even if the recorder stopped early.
+    stop: () => new Promise((resolve) => {
       listener = null;
-      const finish = () => { for (const track of stream.getVideoTracks()) track.stop(); resolve(chunks.length ? new Blob(chunks, { type: recorder.mimeType || type || 'video/mp4' }) : null); };
+      const finish = () => {
+        for (const track of stream.getVideoTracks()) track.stop();
+        resolve(chunks.length ? { blob: new Blob(chunks, { type: recorder.mimeType || type || 'video/mp4' }) } : { error: failure || 'nothing was recorded' });
+      };
       if (recorder.state === 'inactive') return finish();
-      recorder.onstop = finish; recorder.stop();
+      recorder.onstop = finish;
+      try { recorder.requestData(); recorder.stop(); } catch { finish(); }
     }),
   };
 }

@@ -28,7 +28,7 @@ function Icon({ name }: { name: 'mic' | 'sun' | 'moon' | 'pause' | 'close' | 'pl
   </svg>;
 }
 export default function App() {
-  const { voiceClone, redoVoice, chooseVoice, state, connection, mode, text, transcript, error, send, waking, recording, starting, submitting, needsPlayback, recall, playbackRef, unlockAudio, playAnswer, micLevel, voiceStream } = useConversation();
+  const { voiceClone, redoVoice, chooseVoice, state, connection, mode, text, transcript, error, send, waking, recording, starting, submitting, needsPlayback, recall, playbackRef, unlockAudio, playAnswer, micLevel, voiceStream, openMicrophoneNow } = useConversation();
   // Tapping the violet look's brain opens the memories inside it, growing out of the spot that was tapped.
   const brainProbe = useRef<BrainProbe | null>(null), brainLocator = useRef<(() => { x: number; y: number } | null) | null>(null), subjectTop = useRef<(() => number | null) | null>(null);
   const experience = useRef<HTMLElement>(null);
@@ -74,21 +74,27 @@ export default function App() {
   const [recordable] = useState(() => new URLSearchParams(location.search).has('rec') && videoSupported());
   const video = useRef<SessionVideo | null>(null);
   const [videoSince, setVideoSince] = useState<number | null>(null), [videoClock, setVideoClock] = useState(0);
-  const [savedVideo, setSavedVideo] = useState<File | null>(null);
+  const [savedVideo, setSavedVideo] = useState<File | null>(null), [videoError, setVideoError] = useState('');
   const videoAwake = useRef(false);
-  function startVideo() {
-    if (video.current) return;
-    setSavedVideo(null);
-    try { video.current = startSessionVideo(voiceStream()); videoAwake.current = false; setVideoSince(Date.now()); }
-    catch { setToast('This browser cannot record video.'); }
+  // The microphone opens first: on the iPhone, opening it later (when the clone wakes) would cut off a recording
+  // already running.
+  const videoStarting = useRef(false);
+  async function startVideo() {
+    if (video.current || videoStarting.current) return;
+    videoStarting.current = true; setSavedVideo(null); setVideoError('');
+    const voice = voiceStream();
+    try { await openMicrophoneNow(); } catch { /* The conversation asks again when it starts. */ }
+    try { video.current = startSessionVideo(voice); videoAwake.current = false; setVideoSince(Date.now()); }
+    catch (error) { setVideoError(`Could not start recording: ${error instanceof Error ? error.message : 'unknown error'}.`); }
+    videoStarting.current = false;
   }
   async function stopVideo() {
     const recorder = video.current;
     if (!recorder) return;
     video.current = null; setVideoSince(null);
-    const blob = await recorder.stop();
-    if (!blob) return;
-    const stamp = new Date().toISOString().slice(0, 16).replace(/[-:T]/g, '');
+    const result = await recorder.stop();
+    if ('error' in result) { setVideoError(`Recording failed: ${result.error}.`); return; }
+    const blob = result.blob, stamp = new Date().toISOString().slice(0, 16).replace(/[-:T]/g, '');
     setSavedVideo(new File([blob], `talk2urself-${stamp}.${videoExtension(blob)}`, { type: blob.type }));
   }
   async function saveVideo() {
@@ -227,7 +233,7 @@ export default function App() {
       <a className="wordmark" href="/" aria-label="Talk2urself — home" tabIndex={leaving ? -1 : undefined}><img className="logo logo-light" src={logoLight} alt="" /><img className="logo logo-dark" src={logoDark} alt="" /></a>
       <nav className="header-actions" aria-label="Main navigation">
         {recordable ? videoSince === null
-          ? <button className="record-toggle" aria-label="Record video" title="Record video" onClick={startVideo}><i /></button>
+          ? <button className="record-toggle" aria-label="Record video" title="Record video" onClick={() => void startVideo()}><i /></button>
           : <button className="record-toggle recording" aria-label="Stop recording" title="Stop recording" onClick={() => void stopVideo()}><i /><span>{Math.floor(videoClock / 60000)}:{String(Math.floor(videoClock / 1000) % 60).padStart(2, '0')}</span></button> : null}
         <button className="settings-toggle" aria-label="Open settings" title="Settings" aria-expanded={settingsOpen} aria-controls="experience-panel" onClick={() => setSettingsOpen((open) => !open)}><Icon name="gear" /></button>
         <button className="theme-toggle" aria-label={theme === 'light' ? 'Switch to dark theme' : 'Switch to light theme'} title={theme === 'light' ? 'Dark theme' : 'Light theme'} aria-pressed={theme === 'dark'} onClick={() => setTheme(theme === 'light' ? 'dark' : 'light')}><Icon name={theme === 'light' ? 'moon' : 'sun'} /></button>
@@ -279,6 +285,10 @@ export default function App() {
         <span>Recording ready</span>
         <button className="video-save" onClick={() => void saveVideo()}>Save video</button>
         <button className="video-discard" onClick={() => setSavedVideo(null)}>Discard</button>
+      </div> : null}
+      {videoError ? <div className="video-ready" role="alert">
+        <span>{videoError}</span>
+        <button className="video-discard" onClick={() => setVideoError('')}>OK</button>
       </div> : null}
       {brainOrigin ? <Suspense fallback={null}><BrainView origin={brainOrigin} recall={recall} theme={theme} onClose={closeBrain} onLeave={() => setBrainOut(false)} /></Suspense> : null}
     </main>
