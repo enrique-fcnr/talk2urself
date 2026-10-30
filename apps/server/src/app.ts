@@ -1,6 +1,6 @@
 import Fastify from 'fastify';
 import websocket from '@fastify/websocket';
-import { maxRecalled, maxRecordingBytes, parseAudioInput, parseClientCommand, parseSpeechProgress, type AudioInput, type ConversationState, type ServerEvent, type Usage } from '../../../shared/protocol.ts';
+import { maxRecalled, maxRecordingBytes, parseAudioInput, parseClientCommand, parseScreenMark, parseSpeechProgress, parseVoicePlayed, type AudioInput, type ConversationState, type ServerEvent, type Usage } from '../../../shared/protocol.ts';
 import { extractGestures, wantsSleep } from '../../../shared/gestures.ts';
 import { openaiTranscriptionModel, type Message, type VoiceProvider } from './voice.ts';
 import { randomUUID } from 'node:crypto';
@@ -17,6 +17,7 @@ import { firstSentenceEnd } from './reply-stream.ts';
 import { looksUnfinished } from './turn-end.ts';
 import type { GestureCue } from '../../../shared/gestures.ts';
 import type { TimedSpeech } from './speech-timing.ts';
+import type { VoiceLog } from './voice-log.ts';
 
 // What the page shows when a turn fails: services raise their own (Portuguese) messages for the logs; the interface
 // gets a short English sentence for the kind of failure.
@@ -33,6 +34,8 @@ export function userMessage(error: unknown) {
 }
 // webRoot: serve the built web app from there (production).
 export async function createApp(options: { voice?: VoiceProvider; memory?: MemoryService; onUsage?: (record: Record<string, string | number>) => void; onMemoryDiagnostic?: (record: MemoryDiagnosticRecord) => void; webRoot?: string; cloner?: VoiceCloner;
+  // voiceLog: a copy of the clone's voice as heard, for putting it back under a screen recording (see voice-log.ts).
+  voiceLog?: VoiceLog;
   // Development only: each message the page sends and each state the server enters, without any content.
   onDebug?: (record: Record<string, string | number>) => void;
   // accessCode: only browsers that opened the site with ?k=<code> get in (see gate.ts).
@@ -217,18 +220,23 @@ export async function createApp(options: { voice?: VoiceProvider; memory?: Memor
     // mouth cues once the whole segment is known. canStart: whether this turn may still start speaking.
     async function streamSegment(current: Speech, index: number, canStart: () => boolean = () => true) {
       const segment = current.segments[index];
-      let announced = false;
+      let announced = false, clip: string | undefined;
       const live = () => speech === current && state === 'speaking' && !current.controller.signal.aborted;
       const announce = () => {
         if (announced) return live();
         if (!current.active) { if (!canStart() || current.controller.signal.aborted) return false; activate(current); }
         if (!live()) return false;
         announced = true; current.sent = Math.max(current.sent, index + 1);
+        clip = options.voiceLog?.start(segment.text, language);
         send({ type: 'audio-output', mime: 'audio/pcm', gestures: segment.gestures, segment: index,
-          last: current.complete && index === current.segments.length - 1, from: segment.from, to: segment.to });
+          last: current.complete && index === current.segments.length - 1, from: segment.from, to: segment.to, ...(clip ? { clip } : {}) });
         return true;
       };
-      const timed = await voiceSegment(segment.text, current.controller.signal, (pcm) => { if (announce()) socket.send(pcm, { binary: true }); });
+      const timed = await voiceSegment(segment.text, current.controller.signal, (pcm) => {
+        if (!announce()) return;
+        socket.send(pcm, { binary: true });
+        if (clip) options.voiceLog?.chunk(clip, pcm);
+      });
       if (!announce()) return;
       send({ type: 'audio-done', segment: index, phonemes: timed.phonemes });
     }
@@ -514,6 +522,10 @@ export async function createApp(options: { voice?: VoiceProvider; memory?: Memor
         send({ type: 'error', message: 'Message too large.' });
         return;
       }
+      const played = parseVoicePlayed(payload.toString());
+      if (played) { options.voiceLog?.played(played); return; }
+      const mark = parseScreenMark(payload.toString());
+      if (mark) { options.voiceLog?.mark(mark); return; }
       const progress = parseSpeechProgress(payload.toString());
       if (progress) {
         if (progress.type === 'playing') voiceNext(progress.segment);

@@ -21,7 +21,8 @@ export type ServerEvent =
   | { type: 'transcript'; text: string; language?: 'pt' | 'en' }
   // A reply arrives sentence by sentence: segment counts from 0, last marks the final one, from/to place it in the spoken text.
   // audio/pcm: the segment streams as raw 16-bit mono 24 kHz pieces (binary messages) until its audio-done, which brings the mouth cues.
-  | { type: 'audio-output'; mime: 'audio/wav' | 'audio/pcm'; phonemes?: PhonemeCue[]; gestures?: GestureCue[]; segment?: number; last?: boolean; from?: number; to?: number }
+  // clip: the segment's id in the server's copy of the voice (see VoicePlayed).
+  | { type: 'audio-output'; mime: 'audio/wav' | 'audio/pcm'; phonemes?: PhonemeCue[]; gestures?: GestureCue[]; segment?: number; last?: boolean; from?: number; to?: number; clip?: string }
   | { type: 'audio-done'; segment: number; phonemes: PhonemeCue[] }
   // The reply has no more segments than these (sent when the last one went out before that was known).
   | { type: 'speech-end'; segments: number }
@@ -60,6 +61,36 @@ export function parseSpeechProgress(raw: string): SpeechProgress | null {
   } catch { return null; }
 }
 
+// When the page played a clip of the clone's voice, so it can be put back under a screen recording later.
+// pieces: [sample offset in the clip, wall-clock ms it reached the speakers], one per stretch played without a break.
+// stopped: the wall-clock ms it was cut off, if it was.
+export type VoicePlayed = { type: 'voice-played'; clip: string; pieces: [number, number][]; stopped?: number };
+export const clipPattern = /^\d{8}-\d{9}-\d{1,7}$/;
+export function parseVoicePlayed(raw: string): VoicePlayed | null {
+  try {
+    const value: unknown = JSON.parse(raw);
+    if (!isRecord(value) || value.type !== 'voice-played' || typeof value.clip !== 'string' || !clipPattern.test(value.clip)) return null;
+    const time = (item: unknown) => typeof item === 'number' && Number.isFinite(item) && item > 1e12 && item < 1e14;
+    if (!Array.isArray(value.pieces) || !value.pieces.length || value.pieces.length > 100 || !value.pieces.every((piece) =>
+      Array.isArray(piece) && piece.length === 2 && Number.isSafeInteger(piece[0]) && piece[0] >= 0 && piece[0] < 1e8 && time(piece[1]))) return null;
+    if (value.stopped !== undefined && !time(value.stopped)) return null;
+    return { type: 'voice-played', clip: value.clip, pieces: value.pieces.map(([sample, at]) => [Number(sample), Number(at)]), ...(value.stopped !== undefined ? { stopped: Number(value.stopped) } : {}) };
+  } catch { return null; }
+}
+
+// A big change on screen (waking, falling asleep, opening or closing the memories) and the wall-clock ms it happened:
+// found again in a screen recording, it says where the recording sits in time, to put the voice back exactly.
+export const screenMarks = ['wake', 'sleep', 'memories', 'memories-closed'] as const;
+export type ScreenMark = { type: 'screen-mark'; what: (typeof screenMarks)[number]; at: number };
+export function parseScreenMark(raw: string): ScreenMark | null {
+  try {
+    const value: unknown = JSON.parse(raw);
+    if (!isRecord(value) || value.type !== 'screen-mark' || !screenMarks.some((what) => what === value.what) ||
+      typeof value.at !== 'number' || !Number.isFinite(value.at) || value.at < 1e12 || value.at > 1e14) return null;
+    return { type: 'screen-mark', what: value.what as ScreenMark['what'], at: value.at };
+  } catch { return null; }
+}
+
 export function parseAudioInput(raw: string): AudioInput | null {
   try {
     const value: unknown = JSON.parse(raw);
@@ -89,7 +120,8 @@ export function parseServerEvent(raw: string): ServerEvent | null {
       const count = (key: string) => Number.isSafeInteger(value[key]) && Number(value[key]) >= 0 ? Number(value[key]) : undefined;
       const segment = count('segment'), from = count('from'), to = count('to');
       return { type: 'audio-output', mime: value.mime, ...(phonemes ? { phonemes } : {}), ...(gestures ? { gestures } : {}),
-        ...(segment !== undefined ? { segment, last: value.last === true } : {}), ...(from !== undefined && to !== undefined && to >= from ? { from, to } : {}) };
+        ...(segment !== undefined ? { segment, last: value.last === true } : {}), ...(from !== undefined && to !== undefined && to >= from ? { from, to } : {}),
+        ...(typeof value.clip === 'string' && clipPattern.test(value.clip) ? { clip: value.clip } : {}) };
     }
     if (value.type === 'usage' && isRecord(value.usage)) {
       const usage = value.usage;

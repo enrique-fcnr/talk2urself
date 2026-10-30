@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { createMemoryService, readMemoryConfig } from './memory.ts';
 import { serializeDiagnostic, type MemoryDiagnosticRecord } from './memory-diagnostics.ts';
 import { readAccessCode } from './gate.ts';
+import { createVoiceLog } from './voice-log.ts';
 
 const config = readVoiceConfig();
 const memoryConfig = config ? readMemoryConfig() : null;
@@ -30,6 +31,8 @@ const app = await createApp({
   voice: config ? createVoiceProvider(config) : undefined,
   memory: memoryConfig ? createMemoryService(memoryConfig, fetch, logUsage) : undefined,
   cloner,
+  // The clone's voice as heard, kept two weeks for putting it back under screen recordings of the iPhone.
+  voiceLog: config ? createVoiceLog('.local/voice-log') : undefined,
   onUsage: logUsage,
   // WS_DEBUG=1 (set by npm run dev): a log of the conversation protocol, to diagnose turn-taking.
   onDebug: process.env.WS_DEBUG === '1' ? (record) => {

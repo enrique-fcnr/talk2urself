@@ -8,20 +8,20 @@ import type { GestureCue } from '../../../shared/gestures';
 const sampleRate = 24_000, lead = .06;
 
 type Segment = { segment: number; from: number; to: number; last: boolean; gestures: GestureCue[]; cues: PhonemeCue[];
-  startAt?: number; endAt: number; done: boolean; started: boolean; sources: AudioBufferSourceNode[]; peak: number; samples: number };
-export type SegmentInfo = { segment: number; from: number; to: number; last: boolean; gestures: GestureCue[] };
-type Events = { onSegmentStart(segment: number): void; onFinished(): void; onBlocked(blocked: boolean): void; onPlayback(playback: AvatarPlayback | null): void };
+  startAt?: number; endAt: number; done: boolean; started: boolean; sources: AudioBufferSourceNode[]; peak: number; samples: number;
+  clip?: string; pieces: [number, number][]; reported: boolean };
+export type SegmentInfo = { segment: number; from: number; to: number; last: boolean; gestures: GestureCue[]; clip?: string };
+// When a clip of the voice was heard (see VoicePlayed in the protocol).
+export type PlayedReport = { clip: string; pieces: [number, number][]; stopped?: number };
+type Events = { onSegmentStart(segment: number): void; onPlayed(report: PlayedReport): void; onFinished(): void; onBlocked(blocked: boolean): void; onPlayback(playback: AvatarPlayback | null): void };
 
 export function createSpeechPlayer(events: Events) {
   let context: AudioContext | undefined, segments = new Map<number, Segment>(), receiving: Segment | undefined;
-  // Every segment plays through one output node, so the clone's voice (and nothing else) can also be recorded.
-  let output: GainNode | undefined, capture: MediaStreamAudioDestinationNode | undefined;
-  let tap: ScriptProcessorNode | undefined, tapped: ((samples: Float32Array, rate: number) => void) | null = null;
   let count: number | undefined, ticker: ReturnType<typeof setInterval> | undefined, showing: Segment | undefined, finished = false;
 
   // Inside a tap: browsers only let audio start after a gesture. A silent buffer also wakes iOS's audio.
   function unlock() {
-    if (!context) { context = new AudioContext({ latencyHint: 'interactive' }); output = context.createGain(); output.connect(context.destination); }
+    context ??= new AudioContext({ latencyHint: 'interactive' });
     void context.resume().catch(() => {});
     const silence = context.createBufferSource(); silence.buffer = context.createBuffer(1, 1, sampleRate); silence.connect(context.destination); silence.start();
   }
@@ -46,9 +46,22 @@ export function createSpeechPlayer(events: Events) {
       if (previous?.phoneme === phoneme && Math.abs(previous.end - cue.start) < 1e-6) previous.end = cue.end; else segment.cues.push(cue);
     }
   }
+  // The wall-clock moment (ms) a time on the audio clock reaches the speakers.
+  function wallClock(time: number) {
+    const stamp = context!.getOutputTimestamp?.();
+    if (stamp?.contextTime !== undefined && stamp.performanceTime) return performance.timeOrigin + stamp.performanceTime + (time - stamp.contextTime) * 1000;
+    return performance.timeOrigin + performance.now() + (time - context!.currentTime + (context!.outputLatency || 0)) * 1000;
+  }
+  // Tells the server when a segment was heard, once: in full, or up to where it was cut off.
+  function report(segment: Segment, stopped?: number) {
+    if (segment.reported || !segment.clip || !segment.pieces.length) return;
+    segment.reported = true;
+    events.onPlayed({ clip: segment.clip, pieces: segment.pieces.map(([sample, at]) => [sample, Math.round(at)]), ...(stopped !== undefined ? { stopped: Math.round(stopped) } : {}) });
+  }
   function tick() {
     if (!context) return;
     const now = context.currentTime;
+    for (const segment of segments.values()) if (segment.done && now >= segment.endAt) report(segment);
     // The segment being heard: the latest one that has started.
     let current: Segment | undefined;
     for (const segment of segments.values()) if (segment.startAt !== undefined && segment.startAt <= now && (!current || segment.segment > current.segment)) current = segment;
@@ -66,7 +79,7 @@ export function createSpeechPlayer(events: Events) {
   function begin(info: SegmentInfo) {
     if (info.segment === 0) stop(false);
     finished = false;
-    receiving = { ...info, cues: [], endAt: 0, done: false, started: false, sources: [], peak: .05, samples: 0 };
+    receiving = { ...info, cues: [], endAt: 0, done: false, started: false, sources: [], peak: .05, samples: 0, pieces: [], reported: false };
     segments.set(info.segment, receiving);
     ticker ??= setInterval(tick, 30);
   }
@@ -84,8 +97,10 @@ export function createSpeechPlayer(events: Events) {
       segment.endAt = segment.startAt;
     }
     // Generation fell behind playback: continue from now (a short gap instead of a lost piece).
-    if (segment.endAt < now + .01) { segment.startAt += now + .02 - segment.endAt; segment.endAt = now + .02; }
-    const source = context.createBufferSource(); source.buffer = buffer; source.connect(output ?? context.destination);
+    const behind = segment.endAt < now + .01;
+    if (behind) { segment.startAt += now + .02 - segment.endAt; segment.endAt = now + .02; }
+    if ((behind || !segment.pieces.length) && segment.pieces.length < 100) segment.pieces.push([segment.samples, wallClock(segment.endAt)]);
+    const source = context.createBufferSource(); source.buffer = buffer; source.connect(context.destination);
     source.start(segment.endAt); segment.sources.push(source);
     loudnessCues(segment, pcm, segment.endAt - segment.startAt);
     segment.endAt += buffer.duration; segment.samples += pcm.length;
@@ -108,32 +123,14 @@ export function createSpeechPlayer(events: Events) {
   }
   // Silences everything at once (an interruption, the end of the conversation).
   function stop(notify = true) {
+    const stopped = context ? wallClock(context.currentTime) : undefined;
+    for (const segment of segments.values()) report(segment, stopped);
     for (const segment of segments.values()) for (const source of segment.sources) { try { source.stop(); } catch { /* not started */ } }
     segments = new Map(); receiving = undefined; count = undefined; showing = undefined;
     if (ticker) { clearInterval(ticker); ticker = undefined; }
     if (notify) finished = true;
     events.onPlayback(null); events.onBlocked(false);
   }
-  // The clone's voice, for recording a video of the conversation: as a stream, or as samples while it plays.
-  // Call inside a tap (it may create the audio).
-  function voiceCapture() {
-    unlock();
-    return {
-      stream() {
-        if (!capture) { capture = context!.createMediaStreamDestination(); output!.connect(capture); }
-        return capture.stream;
-      },
-      tap(listener: ((samples: Float32Array, rate: number) => void) | null) {
-        tapped = listener;
-        if (tap || !listener) return;
-        // A muted branch to the speakers keeps the processor running; silence is passed on too, so the track stays whole.
-        tap = context!.createScriptProcessor(4096, 1, 1);
-        const mute = context!.createGain(); mute.gain.value = 0;
-        output!.connect(tap); tap.connect(mute); mute.connect(context!.destination);
-        tap.onaudioprocess = (event) => tapped?.(event.inputBuffer.getChannelData(0).slice(), event.inputBuffer.sampleRate);
-      },
-    };
-  }
   async function resume() { if (context) await context.resume().catch(() => {}); }
-  return { unlock, begin, chunk, done, end, heard, stop, resume, voiceCapture };
+  return { unlock, begin, chunk, done, end, heard, stop, resume };
 }

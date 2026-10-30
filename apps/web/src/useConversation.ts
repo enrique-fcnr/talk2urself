@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { recallKey, type Recall } from './brain/layout';
-import { maxRecordingBytes, parseServerEvent, type ClientCommand, type ConversationState, type Usage } from '../../../shared/protocol';
+import { maxRecordingBytes, parseServerEvent, type ClientCommand, type ConversationState, type ScreenMark, type Usage } from '../../../shared/protocol';
 import { closeMicrophone, openMicrophone, quietPeak, recordMicrophone, watchForBargeIn, type Recording } from './recorder';
 import type { AvatarPlayback } from '../../../shared/lip-sync';
 import { createSpeechPlayer } from './speech-player';
@@ -44,10 +44,13 @@ export function useConversation() {
   const stateRef = useRef<ConversationState>('idle');
 
   function sendJson(message: object) { if (socketRef.current?.readyState === WebSocket.OPEN) socketRef.current.send(JSON.stringify(message)); }
+  // A big change on screen, by the same clock as the voice's playback reports (see ScreenMark in the protocol).
+  const markScreen = (what: ScreenMark['what']) => sendJson({ type: 'screen-mark', what, at: Math.round(performance.timeOrigin + performance.now()) });
   // The reply plays as it streams in; the server voices the next sentence once the page starts playing the previous one.
   const player = useRef<ReturnType<typeof createSpeechPlayer> | null>(null);
   player.current ??= createSpeechPlayer({
     onSegmentStart: (segment) => sendJson({ type: 'playing', segment }),
+    onPlayed: (report) => sendJson({ type: 'voice-played', ...report }),
     onFinished: () => send('playback-ended'),
     onBlocked: (blocked) => setNeedsPlayback(blocked),
     onPlayback: (playback) => { playbackRef.current = playback; },
@@ -83,9 +86,6 @@ export function useConversation() {
     void microphoneStream().catch(() => { /* Reported when recording starts. */ });
   }
   async function playAnswer() { await player.current!.resume(); }
-  const voiceCapture = () => player.current!.voiceCapture();
-  // Opens the microphone ahead of the conversation (a video recording starts only once it is open).
-  const openMicrophoneNow = () => microphoneStream();
 
   useEffect(() => {
     let disposed = false;
@@ -129,7 +129,7 @@ export function useConversation() {
         }
         if (event.type === 'audio-output') {
           expectingAudio = true;
-          player.current!.begin({ segment: event.segment ?? 0, last: event.segment === undefined || !!event.last, from: event.from ?? 0, to: event.to ?? 0, gestures: event.gestures ?? [] });
+          player.current!.begin({ segment: event.segment ?? 0, last: event.segment === undefined || !!event.last, from: event.from ?? 0, to: event.to ?? 0, gestures: event.gestures ?? [], clip: event.clip });
           return;
         }
         if (event.type === 'audio-done') { expectingAudio = false; player.current!.done(event.segment, event.phonemes); return; }
@@ -239,5 +239,5 @@ export function useConversation() {
     if (!status) throw new Error('Could not change the voice right now. Try again.');
     cloneRef.current = status; setVoiceClone(status);
   }
-  return { voiceClone, redoVoice, chooseVoice, state, connection, mode, model, text, transcript, error, send, waking, recording, starting, submitting, needsPlayback, usage, recall, playbackRef, unlockAudio, playAnswer, micLevel, voiceCapture, openMicrophoneNow };
+  return { voiceClone, redoVoice, chooseVoice, state, connection, mode, model, text, transcript, error, send, waking, recording, starting, submitting, needsPlayback, usage, recall, playbackRef, unlockAudio, playAnswer, micLevel, markScreen };
 }
