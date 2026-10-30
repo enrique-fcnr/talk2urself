@@ -1,6 +1,7 @@
 // Records a video of the conversation without screen recording: right after each frame of Kelly is rendered, the page
-// redraws what the viewer sees (background, halo, Kelly with her fade, the captions, the logo) onto a canvas of its own,
-// and that canvas plus the clone's voice go into a MediaRecorder. Buttons, panels and the user's voice never enter it.
+// redraws what the viewer sees (background, halo, Kelly with her fade, the captions, the start screen, the memories view)
+// onto a canvas of its own, and that canvas plus the clone's voice go into a MediaRecorder. The header buttons, the
+// recording controls and the user's voice never enter it.
 // It aims for 60 frames a second; if the phone cannot keep that up it settles on a steady 30 instead.
 
 type Listener = (avatar: HTMLCanvasElement) => void;
@@ -62,7 +63,9 @@ export function startSessionVideo(voice: MediaStream | null): SessionVideo {
     drawHalo();
     drawAvatar(avatar);
     drawCaptions();
-    drawLogo();
+    for (const root of document.querySelectorAll('.wordmark, .start-screen, .memory-moment')) paint(root, opacityOf(root.parentElement));
+    const brain = document.querySelector('.brain-view');
+    if (brain) drawBrain(brain);
   }
   // The halo: an ellipse of its glow colour fading out at 72% (farthest-corner sizing, centred at 50% 48%). It fades
   // to the same colour at zero alpha: fading to 'transparent' (black) would grey it.
@@ -133,12 +136,101 @@ export function startSessionVideo(voice: MediaStream | null): SessionVideo {
     lay.globalCompositeOperation = 'source-over';
     ctx.drawImage(layer, 0, 0);
   }
-  function drawLogo() {
-    for (const logo of document.querySelectorAll<HTMLImageElement>('.header .logo')) {
-      if (getComputedStyle(logo).display === 'none' || getComputedStyle(logo.parentElement!).visibility === 'hidden') continue;
-      const alpha = opacityOf(logo), { x, y, w, h } = rect(logo);
-      if (alpha > .01 && logo.complete) { ctx.globalAlpha = alpha; ctx.drawImage(logo, x, y, w, h); ctx.globalAlpha = 1; }
+  // --- Any other part of the page, drawn from its boxes: backgrounds, borders, text, icons, images. -----------------
+  // Not a general renderer: it covers what these screens use (solid fills, rounded corners, words, stroked SVG icons).
+  // Shadows, blurs behind glass and masks are left out.
+  const skipped = '.header-actions, .record-toggle, .video-ready, .sr-only, .captions, .start-hit-area';
+  const transparent = (color: string) => !color || color === 'transparent' || /rgba\([^)]*,\s*0\)$/.test(color);
+  type Spaced = CanvasRenderingContext2D & { letterSpacing?: string };
+  function box(element: Element, css: CSSStyleDeclaration, alpha: number) {
+    const fill = css.backgroundColor, line = (parseFloat(css.borderTopWidth) || 0) * sx, stroke = css.borderTopColor;
+    if (transparent(fill) && (!line || transparent(stroke))) return;
+    const { x, y, w, h } = rect(element), radius = Math.min((parseFloat(css.borderTopLeftRadius) || 0) * sx, h / 2, w / 2);
+    ctx.globalAlpha = alpha;
+    if (!transparent(fill)) { ctx.fillStyle = fill; ctx.beginPath(); ctx.roundRect(x, y, w, h, radius); ctx.fill(); }
+    if (line && !transparent(stroke)) { ctx.lineWidth = line; ctx.strokeStyle = stroke; ctx.beginPath(); ctx.roundRect(x + line / 2, y + line / 2, w - line, h - line, Math.max(0, radius - line / 2)); ctx.stroke(); }
+  }
+  // Text word by word, each at the place the page laid it out (so wrapping and centring match).
+  function words(node: Text, css: CSSStyleDeclaration, alpha: number) {
+    const range = document.createRange(), upper = css.textTransform === 'uppercase', pen = ctx as Spaced;
+    pen.font = `${css.fontStyle} ${css.fontWeight} ${parseFloat(css.fontSize) * sy}px ${css.fontFamily}`;
+    if ('letterSpacing' in pen) pen.letterSpacing = css.letterSpacing === 'normal' ? '0px' : `${parseFloat(css.letterSpacing) * sx}px`;
+    pen.fillStyle = css.color; pen.globalAlpha = alpha; pen.textAlign = 'left'; pen.textBaseline = 'middle';
+    for (const match of node.data.matchAll(/\S+/g)) {
+      range.setStart(node, match.index); range.setEnd(node, match.index + match[0].length);
+      const area = range.getBoundingClientRect();
+      if (area.width) pen.fillText(upper ? match[0].toUpperCase() : match[0], area.left * sx, (area.top + area.height / 2) * sy);
     }
+    if ('letterSpacing' in pen) pen.letterSpacing = '0px';
+  }
+  function icon(svg: SVGSVGElement, css: CSSStyleDeclaration, alpha: number) {
+    const { x, y, w, h } = rect(svg), view = svg.viewBox.baseVal;
+    if (!view?.width) return;
+    ctx.save(); ctx.globalAlpha = alpha; ctx.translate(x, y); ctx.scale(w / view.width, h / view.height); ctx.translate(-view.x, -view.y);
+    ctx.strokeStyle = ctx.fillStyle = css.color; ctx.lineWidth = Number(svg.getAttribute('stroke-width')) || 1.5; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+    for (const shape of svg.querySelectorAll('path, circle, rect, line')) {
+      const at = (name: string) => Number(shape.getAttribute(name)) || 0, path = new Path2D();
+      if (shape.tagName === 'path') path.addPath(new Path2D(shape.getAttribute('d') ?? ''));
+      else if (shape.tagName === 'circle') path.arc(at('cx'), at('cy'), at('r'), 0, Math.PI * 2);
+      else if (shape.tagName === 'rect') path.roundRect(at('x'), at('y'), at('width'), at('height'), at('rx'));
+      else { path.moveTo(at('x1'), at('y1')); path.lineTo(at('x2'), at('y2')); }
+      if ((shape.getAttribute('fill') ?? svg.getAttribute('fill')) === 'currentColor') ctx.fill(path); else ctx.stroke(path);
+    }
+    ctx.restore();
+  }
+  function paint(element: Element, inherited: number) {
+    if (element.matches(skipped)) return;
+    const css = getComputedStyle(element);
+    if (css.display === 'none') return;
+    const alpha = inherited * (Number(css.opacity) || 0);
+    if (alpha <= .01) return;
+    const visible = css.visibility !== 'hidden';
+    if (visible) {
+      if (element instanceof HTMLImageElement) {
+        if (element.complete && element.naturalWidth) { const { x, y, w, h } = rect(element); ctx.globalAlpha = alpha; ctx.drawImage(element, x, y, w, h); }
+        return;
+      }
+      if (element instanceof SVGSVGElement) { icon(element, css, alpha); return; }
+      box(element, css, alpha);
+    }
+    for (const child of element.childNodes) {
+      if (child instanceof Text) { if (visible && child.data.trim()) words(child, css, alpha); }
+      else if (child instanceof Element) paint(child, alpha);
+    }
+    ctx.globalAlpha = 1;
+  }
+  // A CSS radial gradient (an ellipse sized to the farthest corner) with its colour stops, as the page computed it.
+  function radial(element: Element, alpha: number) {
+    const image = getComputedStyle(element).backgroundImage, at = /at ([\d.]+)% ([\d.]+)%/.exec(image);
+    const stops = [...image.matchAll(/(rgba?\([^)]+\))\s*([\d.]+)(%|px)?/g)].map((stop) => [stop[1], stop[3] === '%' ? Number(stop[2]) / 100 : 0] as const);
+    if (!stops.length) return;
+    const { x, y, w, h } = rect(element), px = Number(at?.[1] ?? 50) / 100 * w, py = Number(at?.[2] ?? 50) / 100 * h;
+    const rx = Math.SQRT2 * Math.max(px, w - px), ry = Math.SQRT2 * Math.max(py, h - py);
+    ctx.save(); ctx.globalAlpha = alpha; ctx.beginPath(); ctx.rect(x, y, w, h); ctx.clip();
+    ctx.translate(x + px, y + py); ctx.scale(1, ry / rx);
+    const gradient = ctx.createRadialGradient(0, 0, 0, 0, 0, rx);
+    for (const [color, offset] of stops) gradient.addColorStop(Math.min(1, offset), color);
+    ctx.fillStyle = gradient; ctx.fillRect(-rx, -rx, rx * 2, rx * 2); ctx.restore();
+  }
+  // The memories view: what is behind it blurred, its veil, the hologram (screen-blended in the dark theme), then its
+  // title, filters, hint and card on top.
+  function drawBrain(brain: Element) {
+    const alpha = Number(getComputedStyle(brain).opacity) || 0;
+    if (alpha <= .01) return;
+    if ('filter' in lay) {
+      lay.save(); lay.globalCompositeOperation = 'copy'; lay.filter = `blur(${9 * sx}px)`; lay.drawImage(canvas, 0, 0); lay.restore();
+      ctx.globalAlpha = alpha; ctx.drawImage(layer, 0, 0);
+    }
+    radial(brain, alpha);
+    const scene = brain.querySelector('.brain-scene'), hologram = scene?.querySelector('canvas');
+    if (scene && hologram) {
+      const { x, y, w, h } = rect(hologram);
+      ctx.save(); ctx.globalAlpha = alpha * (Number(getComputedStyle(scene).opacity) || 0);
+      if (getComputedStyle(hologram).mixBlendMode === 'screen') ctx.globalCompositeOperation = 'screen';
+      ctx.drawImage(hologram, x, y, w, h); ctx.restore();
+    }
+    for (const child of brain.children) if (child !== scene) paint(child, alpha);
+    ctx.globalAlpha = 1;
   }
 
   recorder.start(1000);

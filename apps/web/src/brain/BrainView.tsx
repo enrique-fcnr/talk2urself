@@ -94,7 +94,8 @@ export default function BrainView({ origin, recall, theme = 'dark', onClose, onL
   useEffect(() => {
     const element = host.current!;
     const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
-    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+    // Kept between frames so a video of the session (session-video.ts) can copy the hologram at any moment.
+    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, preserveDrawingBuffer: true });
     const pixelRatio = Math.min(2, devicePixelRatio || 1);
     renderer.setPixelRatio(pixelRatio); element.appendChild(renderer.domElement);
     const scene = new THREE.Scene(), camera = new THREE.PerspectiveCamera(38, 1, .05, 50);
