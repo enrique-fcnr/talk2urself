@@ -2,6 +2,7 @@ import { lazy, Suspense, useCallback, useEffect, useRef, useState, type MouseEve
 import { useConversation } from './useConversation';
 import type { BrainProbe } from './avatar/kelly';
 import Captions from './Captions';
+import { startSessionVideo, videoExtension, videoSupported, type SessionVideo } from './session-video';
 import SettingsPage from './SettingsPage';
 // The logo: dark letters on the light theme, light letters on the dark one (the 2 stays purple). Both load up
 // front and CSS shows the one for the theme, so switching themes swaps it at once.
@@ -27,7 +28,7 @@ function Icon({ name }: { name: 'mic' | 'sun' | 'moon' | 'pause' | 'close' | 'pl
   </svg>;
 }
 export default function App() {
-  const { voiceClone, redoVoice, chooseVoice, state, connection, mode, text, transcript, error, send, waking, recording, starting, submitting, needsPlayback, recall, playbackRef, unlockAudio, playAnswer, micLevel } = useConversation();
+  const { voiceClone, redoVoice, chooseVoice, state, connection, mode, text, transcript, error, send, waking, recording, starting, submitting, needsPlayback, recall, playbackRef, unlockAudio, playAnswer, micLevel, voiceStream } = useConversation();
   // Tapping the violet look's brain opens the memories inside it, growing out of the spot that was tapped.
   const brainProbe = useRef<BrainProbe | null>(null), brainLocator = useRef<(() => { x: number; y: number } | null) | null>(null), subjectTop = useRef<(() => number | null) | null>(null);
   const experience = useRef<HTMLElement>(null);
@@ -67,6 +68,46 @@ export default function App() {
   }
   function closeBrain() { setBrainOrigin(null); setBrainOut(false); }
   const [settingsOpen, setSettingsOpen] = useState(false);
+  // Video recording (only with ?rec in the address): the page records its own video of Kelly, the captions and the
+  // clone's voice. The record button itself is never in the video; it turns into a stop button with the time while
+  // recording, and the recording also stops when the clone goes back to sleep.
+  const [recordable] = useState(() => new URLSearchParams(location.search).has('rec') && videoSupported());
+  const video = useRef<SessionVideo | null>(null);
+  const [videoSince, setVideoSince] = useState<number | null>(null), [videoClock, setVideoClock] = useState(0);
+  const [savedVideo, setSavedVideo] = useState<File | null>(null);
+  const videoAwake = useRef(false);
+  function startVideo() {
+    if (video.current) return;
+    setSavedVideo(null);
+    try { video.current = startSessionVideo(voiceStream()); videoAwake.current = false; setVideoSince(Date.now()); }
+    catch { setToast('This browser cannot record video.'); }
+  }
+  async function stopVideo() {
+    const recorder = video.current;
+    if (!recorder) return;
+    video.current = null; setVideoSince(null);
+    const blob = await recorder.stop();
+    if (!blob) return;
+    const stamp = new Date().toISOString().slice(0, 16).replace(/[-:T]/g, '');
+    setSavedVideo(new File([blob], `talk2urself-${stamp}.${videoExtension(blob)}`, { type: blob.type }));
+  }
+  async function saveVideo() {
+    const file = savedVideo;
+    if (!file) return;
+    // On the phone the share sheet saves it to Photos or Files; elsewhere it downloads.
+    if (navigator.canShare?.({ files: [file] })) {
+      try { await navigator.share({ files: [file] }); setSavedVideo(null); } catch { /* Cancelled: the video stays offered. */ }
+      return;
+    }
+    const link = document.createElement('a'), url = URL.createObjectURL(file);
+    link.href = url; link.download = file.name; link.click();
+    setTimeout(() => URL.revokeObjectURL(url), 60_000); setSavedVideo(null);
+  }
+  useEffect(() => {
+    if (videoSince === null) return;
+    const timer = setInterval(() => setVideoClock(Date.now() - videoSince), 250);
+    return () => clearInterval(timer);
+  }, [videoSince]);
   const [started, setStarted] = useState(false), [leaving, setLeaving] = useState(false), [wordIndex, setWordIndex] = useState(0);
   // The voice model that hears when the user stops talking (~4 MB once, then cached) loads in the background.
   useEffect(() => {
@@ -142,6 +183,11 @@ export default function App() {
   }, [settingsOpen]);
   const busy = state === 'thinking' || state === 'speaking' || starting || submitting;
   const online = connection === 'online';
+  useEffect(() => {
+    if (!video.current) return;
+    if (started) videoAwake.current = true;
+    else if (videoAwake.current) void stopVideo();
+  }, [started]);
   const avatarState = state === 'idle' && entryAwake ? 'listening' : state;
   const status = !online ? connection === 'connecting' ? 'Connecting…' : 'Reconnecting…' : state === 'idle' && entryAwake ? 'Ready to talk' : waking ? 'Waking up' : recording ? 'Listening to you'
     : ({ idle: 'Resting', listening: 'Ready to listen', thinking: 'Thinking', speaking: 'Answering' })[state];
@@ -180,6 +226,9 @@ export default function App() {
     <header className="header" ref={header}>
       <a className="wordmark" href="/" aria-label="Talk2urself — home" tabIndex={leaving ? -1 : undefined}><img className="logo logo-light" src={logoLight} alt="" /><img className="logo logo-dark" src={logoDark} alt="" /></a>
       <nav className="header-actions" aria-label="Main navigation">
+        {recordable ? videoSince === null
+          ? <button className="record-toggle" aria-label="Record video" title="Record video" onClick={startVideo}><i /></button>
+          : <button className="record-toggle recording" aria-label="Stop recording" title="Stop recording" onClick={() => void stopVideo()}><i /><span>{Math.floor(videoClock / 60000)}:{String(Math.floor(videoClock / 1000) % 60).padStart(2, '0')}</span></button> : null}
         <button className="settings-toggle" aria-label="Open settings" title="Settings" aria-expanded={settingsOpen} aria-controls="experience-panel" onClick={() => setSettingsOpen((open) => !open)}><Icon name="gear" /></button>
         <button className="theme-toggle" aria-label={theme === 'light' ? 'Switch to dark theme' : 'Switch to light theme'} title={theme === 'light' ? 'Dark theme' : 'Light theme'} aria-pressed={theme === 'dark'} onClick={() => setTheme(theme === 'light' ? 'dark' : 'light')}><Icon name={theme === 'light' ? 'moon' : 'sun'} /></button>
       </nav>
@@ -226,6 +275,11 @@ export default function App() {
         <i /><strong>{moment.text}</strong>
       </p> : null}
       {started && toast ? <p className="toast" role="alert">{toast}</p> : null}
+      {savedVideo ? <div className="video-ready" role="dialog" aria-label="Recording ready">
+        <span>Recording ready</span>
+        <button className="video-save" onClick={() => void saveVideo()}>Save video</button>
+        <button className="video-discard" onClick={() => setSavedVideo(null)}>Discard</button>
+      </div> : null}
       {brainOrigin ? <Suspense fallback={null}><BrainView origin={brainOrigin} recall={recall} theme={theme} onClose={closeBrain} onLeave={() => setBrainOut(false)} /></Suspense> : null}
     </main>
   </div>;

@@ -83,6 +83,7 @@ export function useConversation() {
     void microphoneStream().catch(() => { /* Reported when recording starts. */ });
   }
   async function playAnswer() { await player.current!.resume(); }
+  const voiceStream = () => player.current!.voiceStream();
 
   useEffect(() => {
     let disposed = false;
@@ -236,5 +237,5 @@ export function useConversation() {
     if (!status) throw new Error('Could not change the voice right now. Try again.');
     cloneRef.current = status; setVoiceClone(status);
   }
-  return { voiceClone, redoVoice, chooseVoice, state, connection, mode, model, text, transcript, error, send, waking, recording, starting, submitting, needsPlayback, usage, recall, playbackRef, unlockAudio, playAnswer, micLevel };
+  return { voiceClone, redoVoice, chooseVoice, state, connection, mode, model, text, transcript, error, send, waking, recording, starting, submitting, needsPlayback, usage, recall, playbackRef, unlockAudio, playAnswer, micLevel, voiceStream };
 }

@@ -14,11 +14,13 @@ type Events = { onSegmentStart(segment: number): void; onFinished(): void; onBlo
 
 export function createSpeechPlayer(events: Events) {
   let context: AudioContext | undefined, segments = new Map<number, Segment>(), receiving: Segment | undefined;
+  // Every segment plays through one output node, so the clone's voice (and nothing else) can also be recorded.
+  let output: GainNode | undefined, capture: MediaStreamAudioDestinationNode | undefined;
   let count: number | undefined, ticker: ReturnType<typeof setInterval> | undefined, showing: Segment | undefined, finished = false;
 
   // Inside a tap: browsers only let audio start after a gesture. A silent buffer also wakes iOS's audio.
   function unlock() {
-    context ??= new AudioContext({ latencyHint: 'interactive' });
+    if (!context) { context = new AudioContext({ latencyHint: 'interactive' }); output = context.createGain(); output.connect(context.destination); }
     void context.resume().catch(() => {});
     const silence = context.createBufferSource(); silence.buffer = context.createBuffer(1, 1, sampleRate); silence.connect(context.destination); silence.start();
   }
@@ -82,7 +84,7 @@ export function createSpeechPlayer(events: Events) {
     }
     // Generation fell behind playback: continue from now (a short gap instead of a lost piece).
     if (segment.endAt < now + .01) { segment.startAt += now + .02 - segment.endAt; segment.endAt = now + .02; }
-    const source = context.createBufferSource(); source.buffer = buffer; source.connect(context.destination);
+    const source = context.createBufferSource(); source.buffer = buffer; source.connect(output ?? context.destination);
     source.start(segment.endAt); segment.sources.push(source);
     loudnessCues(segment, pcm, segment.endAt - segment.startAt);
     segment.endAt += buffer.duration; segment.samples += pcm.length;
@@ -111,6 +113,12 @@ export function createSpeechPlayer(events: Events) {
     if (notify) finished = true;
     events.onPlayback(null); events.onBlocked(false);
   }
+  // The clone's voice as a stream, for recording a video of the conversation. Call inside a tap (it may create the audio).
+  function voiceStream() {
+    unlock();
+    if (!capture) { capture = context!.createMediaStreamDestination(); output!.connect(capture); }
+    return capture.stream;
+  }
   async function resume() { if (context) await context.resume().catch(() => {}); }
-  return { unlock, begin, chunk, done, end, heard, stop, resume };
+  return { unlock, begin, chunk, done, end, heard, stop, resume, voiceStream };
 }

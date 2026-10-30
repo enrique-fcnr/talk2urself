@@ -7,6 +7,7 @@ import { portraitFrame, portraitViewport } from './portrait';
 import { mouthMorphs, mouthPoseAt, type AvatarPlayback } from '../../../../shared/lip-sync';
 import type { ConversationState } from '../../../../shared/protocol';
 import type { SpeechGesture } from '../../../../shared/gestures';
+import { frameRendered } from '../session-video';
 
 // Gesture clips are authored in apps/web/avatar-source/kelly.blend and played additively over the rest pose.
 type Gesture = 'wake' | 'nod' | 'yawn' | 'shrug' | 'think' | 'glance_left' | 'glance_right';
@@ -511,7 +512,7 @@ export function mountKelly(host: HTMLElement, options: ViewOptions) {
     }
     // Ease toward the framing so the bust glides when a message appears below the title.
     if (options.portrait && size) fitPortrait(dt);
-    controls?.update(); renderer.render(scene,camera); frame=requestAnimationFrame(draw);
+    controls?.update(); renderer.render(scene,camera); frameRendered(renderer.domElement); frame=requestAnimationFrame(draw);
   }
   function visibility() { cancelAnimationFrame(frame); if (!document.hidden && !disposed) { lastTime=performance.now(); frame=requestAnimationFrame(draw); } }
   document.addEventListener('visibilitychange',visibility);
