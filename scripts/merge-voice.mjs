@@ -13,6 +13,7 @@
 import { execFileSync, spawnSync } from 'node:child_process';
 import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { basename, dirname, extname, join } from 'node:path';
+import { tmpdir } from 'node:os';
 
 const rate = 24_000;
 const args = process.argv.slice(2), option = (name) => { const at = args.indexOf(name); return at >= 0 ? args.splice(at, 2)[1] : undefined; };
@@ -132,7 +133,8 @@ wav.write('RIFF'); wav.writeUInt32LE(36 + total * 2, 4); wav.write('WAVE', 8); w
 wav.writeUInt16LE(1, 20); wav.writeUInt16LE(1, 22); wav.writeUInt32LE(rate, 24); wav.writeUInt32LE(rate * 2, 28); wav.writeUInt16LE(2, 32); wav.writeUInt16LE(16, 34);
 wav.write('data', 36); wav.writeUInt32LE(total * 2, 40);
 for (let i = 0; i < total; i++) wav.writeInt16LE(Math.max(-32768, Math.min(32767, mix[i])), 44 + i * 2);
-const track = join(dirname(video), `${basename(video, extname(video))}-voz.wav`);
+// The voice track is only a step on the way: it goes to the temporary folder, not next to the video.
+const track = join(tmpdir(), `${basename(video, extname(video))}-voz.wav`);
 writeFileSync(track, wav);
 const out = outOption ?? join(dirname(video), `${basename(video, extname(video))}-com-voz.mp4`);
 const mux = spawnSync('ffmpeg', ['-v', 'error', '-y', '-i', video, '-i', track, '-map', '0:v:0', '-map', '1:a:0', '-c:v', 'copy', '-c:a', 'aac', '-b:a', '192k', '-movflags', '+faststart', out], { encoding: 'utf8' });
