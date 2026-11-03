@@ -1,9 +1,12 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
 
 // Private access for a hosted demo: with ACCESS_CODE set, nothing is served (page, files, API, WebSockets) until the
 // browser holds the access cookie. Opening any address with ?k=<code> once sets it and reloads without the code.
-// Everyone else gets a small public page. Changing the code invalidates every cookie handed out before.
+// Everyone else gets the public landing page (built into <webRoot>/landing, and only that folder is open to them), or a
+// small notice when it is not built. Changing the code invalidates every cookie handed out before.
 export const accessCookie = 't2u_access';
 const contactUrl = 'https://www.linkedin.com/in/enrique-fernandes-b21754217/';
 const maxFailures = 10, failureWindowMs = 15 * 60_000;
@@ -28,7 +31,9 @@ function cookieValue(header: string | undefined) {
   return undefined;
 }
 
-export function registerGate(app: FastifyInstance, code: string) {
+export function registerGate(app: FastifyInstance, code: string, webRoot?: string) {
+  let landing: string | undefined;
+  try { if (webRoot) landing = readFileSync(path.join(webRoot, 'landing', 'index.html'), 'utf8'); } catch { /* Not built: the small notice. */ }
   // The cookie holds a token derived from the code, never the code itself.
   const token = createHmac('sha256', code).update('talk2urself-access').digest('base64url');
   const failures = new Map<string, { count: number; since: number }>();
@@ -50,8 +55,8 @@ export function registerGate(app: FastifyInstance, code: string) {
     const offered = url.searchParams.get('k');
     if (offered !== null) {
       const now = Date.now();
-      if (blocked(request.ip, now)) return restricted(request, reply, 429);
-      if (!same(offered, code)) { fail(request.ip, now); return restricted(request, reply, 403); }
+      if (blocked(request.ip, now)) return restricted(request, reply, 429, landing);
+      if (!same(offered, code)) { fail(request.ip, now); return restricted(request, reply, 403, landing); }
       failures.delete(request.ip);
       url.searchParams.delete('k');
       const secure = request.protocol === 'https' ? '; Secure' : '';
@@ -60,19 +65,24 @@ export function registerGate(app: FastifyInstance, code: string) {
     }
     const held = cookieValue(request.headers.cookie);
     if (held && same(held, token)) return;
-    return restricted(request, reply, 401);
+    // The landing page's own files are public (pages under /landing/ are, too). Judged on the path as the file server
+    // will read it (decoded, dots resolved), so an encoded "..%2f" cannot reach the app's files from there.
+    let route = '';
+    try { route = path.posix.normalize(decodeURIComponent(url.pathname)); } catch { /* malformed: not public */ }
+    if (landing && !route.includes('\\') && (route === '/landing' || route.startsWith('/landing/'))) return;
+    return restricted(request, reply, 401, landing);
   });
 }
 
 // API, WebSockets and files get a bare refusal; any page address gets the public page.
-function restricted(request: FastifyRequest, reply: FastifyReply, status: 401 | 403 | 429) {
+function restricted(request: FastifyRequest, reply: FastifyReply, status: 401 | 403 | 429, landing?: string) {
   const route = request.url.split('?')[0];
   reply.header('Cache-Control', 'no-store');
   if (route.startsWith('/api/') || route.startsWith('/ws') || /\.[a-z0-9]+$/i.test(route)) {
     return reply.code(status).send({ error: 'Access restricted.' });
   }
   // The interface is in English, and so is the public page.
-  return reply.code(status === 429 ? 429 : 200).type('text/html; charset=utf-8').send(restrictedPage(true));
+  return reply.code(status === 429 ? 429 : 200).type('text/html; charset=utf-8').send(landing ?? restrictedPage(true));
 }
 
 const copy = {

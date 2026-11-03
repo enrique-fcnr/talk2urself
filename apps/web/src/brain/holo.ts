@@ -5,7 +5,8 @@ import { MeshoptDecoder } from 'three/examples/jsm/libs/meshopt_decoder.module.j
 // The brain shape: a human brain (cerebrum and cerebellum, the stem removed) simplified to a few thousand triangles, centred,
 // its longest side (front to back) 2 units, the front toward +z. Source: "Human brain, Cerebrum & Brainstem" by
 // pranktoy on Sketchfab, CC BY 4.0, remeshed and smoothed.
-const url = '/avatars/brain.glb';
+// From the page's base: the app at /, the public landing page at /landing/.
+const url = `${import.meta.env.BASE_URL}avatars/brain.glb`;
 let shape: Promise<THREE.BufferGeometry> | undefined;
 export function loadBrainShape(): Promise<THREE.BufferGeometry> {
   shape ??= new GLTFLoader().setMeshoptDecoder(MeshoptDecoder).loadAsync(url).then((gltf) => {

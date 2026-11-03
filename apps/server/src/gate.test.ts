@@ -98,3 +98,27 @@ test('wrong codes are refused and, after ten tries, blocked even for the right o
   assert.equal((await app.inject({ url: `/?k=${code}`, remoteAddress: '10.0.0.9' })).statusCode, 303);
   await app.close();
 });
+
+test('with an access code, visitors get the landing page and only its own files', async () => {
+  const root = webRoot();
+  mkdirSync(path.join(root, 'landing', 'assets'), { recursive: true });
+  writeFileSync(path.join(root, 'landing', 'index.html'), '<div id="landing"></div>');
+  writeFileSync(path.join(root, 'landing', 'assets', 'landing.js'), 'console.log(2)');
+  writeFileSync(path.join(root, 'landing', 'clip.mp4'), Buffer.from('0123456789'));
+  const app = await createApp({ webRoot: root, accessCode: code });
+  for (const url of ['/', '/configuracoes', `/?k=wrong-${code}`]) assert.equal((await app.inject(url)).body, '<div id="landing"></div>', url);
+  assert.equal((await app.inject('/landing/assets/landing.js')).body, 'console.log(2)');
+  assert.equal((await app.inject('/landing/')).body, '<div id="landing"></div>');
+  // The app's own files stay closed, however the path is written.
+  for (const url of ['/assets/app.js', '/index.html', '/landing/../assets/app.js', '/landing/%2e%2e/assets/app.js', '/landing/..%2fassets/app.js', '/landing/..%5cassets/app.js', '/api/health']) {
+    const response = await app.inject(url);
+    assert.notEqual(response.body, 'console.log(1)', url);
+    assert.notEqual(response.body, '<div id="root"></div>', url);
+  }
+  // Media is sent in the ranges Safari asks for.
+  const part = await app.inject({ url: '/landing/clip.mp4', headers: { range: 'bytes=2-5' } });
+  assert.equal(part.statusCode, 206);
+  assert.equal(part.headers['content-range'], 'bytes 2-5/10');
+  assert.equal(part.body, '2345');
+  await app.close();
+});

@@ -9,7 +9,8 @@
     "preview:lan": "node scripts/dev.mjs --lan --preview",
     "check": "tsc --noEmit",
     "test": "node --import tsx --test apps/server/src/app.test.ts apps/server/src/gate.test.ts apps/server/src/voice.test.ts apps/server/src/speech-timing.test.ts apps/server/src/memory.test.ts apps/server/src/language-worker.test.ts apps/server/src/voice-clone.test.ts apps/server/src/voice-log.test.ts apps/server/src/speech-language.test.ts apps/server/src/reply-stream.test.ts apps/server/src/turn-end.test.ts apps/web/src/recorder.test.ts apps/web/src/vectors/projection.test.ts apps/web/src/brain/layout.test.ts apps/web/src/captions.test.ts shared/gestures.test.ts apps/web/src/avatar/crown.test.ts apps/web/src/avatar/portrait.test.ts",
-    "build": "npm run check && vite build apps/web"
+    "build": "npm run check && vite build apps/web && vite build --config apps/web/vite.landing.config.ts",
+    "dev:landing": "vite --config apps/web/vite.landing.config.ts"
   },
   "dependencies": {
     "@fastify/websocket": "11.3.3",

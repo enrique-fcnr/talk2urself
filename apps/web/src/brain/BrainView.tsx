@@ -26,7 +26,9 @@ export function preloadBrain() { void loadBrainShape().catch(() => { /* Retried 
 // The violet brain, opened up: every saved memory is a point of light inside it, memories on the same subject share
 // a region, related ones are joined by faint synapses, and the ones used for the latest answer pulse.
 // onLeave fires as closing starts, so the brain can begin returning into Kelly's head while the hologram shrinks.
-export default function BrainView({ origin, recall, theme = 'dark', onClose, onLeave }: { origin: { x: number; y: number }; recall: Recall | null; theme?: 'light' | 'dark'; onClose: () => void; onLeave?: () => void }) {
+// demo: a fixed layout instead of the server's memories, shown inside a page (embedded) rather than over it: the public
+// landing page, which has no access to the memory API.
+export default function BrainView({ origin, recall, theme = 'dark', onClose, onLeave, demo }: { origin: { x: number; y: number }; recall: Recall | null; theme?: 'light' | 'dark'; onClose: () => void; onLeave?: () => void; demo?: BrainLayout }) {
   const host = useRef<HTMLDivElement>(null), card = useRef<HTMLDivElement>(null), footer = useRef<HTMLElement>(null), closeButton = useRef<HTMLButtonElement>(null);
   const [status, setStatus] = useState<Status>('loading');
   const [layout, setLayout] = useState<BrainLayout | null>(null);
@@ -43,12 +45,13 @@ export default function BrainView({ origin, recall, theme = 'dark', onClose, onL
   const closeRef = useRef<() => void>(() => {});
 
   function close() {
-    if (closing) return;
+    if (closing || demo) return;
     setClosing(true); api.current?.leave(); onLeave?.();
     setTimeout(onClose, closeSeconds * 1000);
   }
   closeRef.current = close;
   useEffect(() => {
+    if (demo) return;
     closeButton.current?.focus();
     const key = (event: KeyboardEvent) => { if (event.key === 'Escape') { if (focusRef.current?.pinned) setFocus(null); else close(); } };
     addEventListener('keydown', key);
@@ -57,6 +60,7 @@ export default function BrainView({ origin, recall, theme = 'dark', onClose, onL
 
   // Memories: loaded on open, and again whenever the server announces a change while the brain is open.
   useEffect(() => {
+    if (demo) { setLayout(demo); setStatus('ready'); return; }
     let active = true, socket: WebSocket | undefined, worker: Worker | undefined, reconnect: ReturnType<typeof setTimeout> | undefined;
     async function load() {
       try {
@@ -103,6 +107,8 @@ export default function BrainView({ origin, recall, theme = 'dark', onClose, onL
     const controls = new OrbitControls(camera, renderer.domElement);
     // Pinch or scroll zooms toward the point under the fingers or cursor, close enough to read the memories one by one.
     Object.assign(controls, { enableDamping: true, dampingFactor: .08, enablePan: false, minDistance: .95, maxDistance: 6, autoRotate: !reduced, autoRotateSpeed: .55, rotateSpeed: .6, zoomSpeed: .9, zoomToCursor: true });
+    // Inside a page (the landing) the wheel and pinch scroll the page, never zoom the brain.
+    if (demo) controls.enableZoom = false;
     // Turning on its own stops while a memory is pinned, while leaving, and while zoomed in close.
     let spinning = !reduced;
     // The hologram arrives once its shape has loaded; memories and dust are placed in the same units meanwhile.
@@ -329,15 +335,15 @@ export default function BrainView({ origin, recall, theme = 'dark', onClose, onL
   // Portalled to the body: the page's stage isolates its own layers, and the brain must cover the header too.
   const mouse = typeof matchMedia === 'function' && matchMedia('(hover: hover)').matches;
   const picked = subjects.find((item) => item.key === subject);
-  return createPortal(<div className={`brain-view${closing ? ' closing' : ''}`} data-theme={theme} role="dialog" aria-modal="true" aria-labelledby="brain-title"
+  const view = <div className={`brain-view${closing ? ' closing' : ''}${demo ? ' embedded' : ''}`} data-theme={theme} {...(demo ? {} : { role: 'dialog', 'aria-modal': true })} aria-labelledby="brain-title"
     style={{ '--origin-x': `${origin.x}px`, '--origin-y': `${origin.y}px`, '--dx': `${origin.x - innerWidth / 2}px`, '--dy': `${origin.y - innerHeight / 2}px` } as CSSProperties}>
     <div ref={host} className="brain-scene" />
     <header className="brain-header">
       <div><h2 id="brain-title">Memories</h2>
         <p>{status === 'ready' ? count ? picked ? `${picked.label} · ${picked.count} of ${count} ${count === 1 ? 'memory' : 'memories'}` : `${count} ${count === 1 ? 'memory' : 'memories'} · ${subjects.length} ${subjects.length === 1 ? 'subject' : 'subjects'}` : 'Still empty' : status === 'loading' ? 'Lighting up…' : ''}</p></div>
-      <button ref={closeButton} className="brain-close" aria-label="Close memories" onClick={close}>
+      {demo ? null : <button ref={closeButton} className="brain-close" aria-label="Close memories" onClick={close}>
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18" /></svg>
-      </button>
+      </button>}
     </header>
     {status === 'ready' && !count ? <p className="brain-message">Talk to your clone to fill the brain. Everything it learns about you becomes a point of light here.</p> : null}
     {status === 'disabled' ? <p className="brain-message">Memory is not set up on the server.</p> : null}
@@ -351,10 +357,13 @@ export default function BrainView({ origin, recall, theme = 'dark', onClose, onL
       {subjects.length ? <ul className="brain-subjects" aria-label="Filter by subject">{subjects.map((item) =>
         <li key={item.key}><button aria-pressed={subject === item.key} onClick={() => { setFocus(null); setSubject((current) => current === item.key ? null : item.key); }}>
           <i style={{ background: item.color }} />{item.label} <span>{item.count}</span></button></li>)}</ul> : null}
-      <p className="brain-hint">{count ? mouse ? 'Drag to rotate · click a point to read it · click outside to go back' : 'Rotate with your finger · tap a point to read it · tap outside to go back' : mouse ? 'Click outside to go back' : 'Tap outside to go back'}
-        {' · '}<a href="/memories" target="_blank" rel="noreferrer">Detailed map&nbsp;↗</a></p>
+      {demo ? <p className="brain-hint">{mouse ? 'Drag to rotate · click a point to read it · pick a subject to filter' : 'Rotate with your finger · tap a point to read it · pick a subject to filter'}</p>
+        : <p className="brain-hint">{count ? mouse ? 'Drag to rotate · click a point to read it · click outside to go back' : 'Rotate with your finger · tap a point to read it · tap outside to go back' : mouse ? 'Click outside to go back' : 'Tap outside to go back'}
+        {' · '}<a href="/memories" target="_blank" rel="noreferrer">Detailed map&nbsp;↗</a></p>}
     </footer>
     <ul className="sr-only" aria-label="List of memories">{layout?.points.map((point) =>
       <li key={point.id}><button onClick={() => setFocus({ point, pinned: true })}>{label(point)}: {point.memory.value}{recalled(point) ? ' (used in the last answer)' : ''}</button></li>)}</ul>
-  </div>, document.body);
+  </div>;
+  // Portalled over the page in the app; in place inside the landing page.
+  return demo ? view : createPortal(view, document.body);
 }

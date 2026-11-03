@@ -43,7 +43,7 @@ export async function createApp(options: { voice?: VoiceProvider; memory?: Memor
   accessCode?: string; trustProxy?: boolean | string } = {}) {
   const app = Fastify({ logger: false, trustProxy: options.trustProxy ?? true });
   await app.register(websocket, { options: { maxPayload: maxRecordingBytes } });
-  if (options.accessCode) registerGate(app, options.accessCode);
+  if (options.accessCode) registerGate(app, options.accessCode, options.webRoot);
   if (options.webRoot) registerWeb(app, options.webRoot);
   const viewers = new Set<WebSocket>();
   const notifyMemories = () => { for (const viewer of viewers) if (viewer.readyState === 1) viewer.send(JSON.stringify({ type: 'memory-sync' })); };

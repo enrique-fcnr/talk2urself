@@ -84,6 +84,10 @@ export type BrainProbe = (clientX: number, clientY: number) => { x: number; y: n
 type ViewOptions = {
   getPlayback: () => AvatarPlayback | null;
   getState: () => ConversationState;
+  // Where she should look, from -1 to 1 across and up the view (the landing page passes the cursor); null looks ahead.
+  getGaze?: () => { x: number; y: number } | null;
+  // A fixed memory count for the brain's glow, instead of reading it from the server (the public landing page).
+  memories?: number;
   getRecording?: () => boolean;
   // The user's voice loudness while recording; the violet brain reacts to it.
   getMicLevel?: () => number;
@@ -285,6 +289,30 @@ export function mountKelly(host: HTMLElement, options: ViewOptions) {
   applyLook(new URLSearchParams(location.search).get('look') ?? 'violet');
   const stage=new THREE.Group(); scene.add(stage);
   const heads: THREE.Mesh[] = [], geometries: THREE.BufferGeometry[] = [];
+  // Following a point (the cursor): the head turns part of the way and the glowing irises slide the rest. The target is
+  // eased twice (a critically damped spring) so quick or jerky cursor moves become one smooth turn, and the turn is
+  // limited. Asleep she looks ahead.
+  // The turn is added after the mixer and taken off again before its next update: a clip that starts would otherwise
+  // take the turned head as its rest pose and keep it (the head jumped and drifted).
+  let headBone: THREE.Object3D | undefined, turned=false;
+  const gazeNow={ x: 0, y: 0 }, gazeSpeed={ x: 0, y: 0 }, beforeTurn=new THREE.Quaternion(), turn=new THREE.Quaternion(), parentTurn=new THREE.Quaternion(), turnAxis=new THREE.Euler();
+  function unfollow() { if (turned && headBone) headBone.quaternion.copy(beforeTurn); turned=false; }
+  function follow(state: ConversationState, dt: number) {
+    const target=state==='idle' || reduced.matches ? null : options.getGaze?.() ?? null;
+    const step=Math.min(dt,1/20), omega=target ? 6 : 3;
+    for (const axis of ['x','y'] as const) {
+      const goal=THREE.MathUtils.clamp(target?.[axis] ?? 0,-1,1);
+      gazeSpeed[axis]+=(-2*omega*gazeSpeed[axis]-omega*omega*(gazeNow[axis]-goal))*step;
+      gazeNow[axis]+=gazeSpeed[axis]*step;
+    }
+    eyeMap.offset.set(-gazeNow.x*.01,gazeNow.y*.006);
+    if (!headBone?.parent || (Math.abs(gazeNow.x)<1e-4 && Math.abs(gazeNow.y)<1e-4)) return;
+    // A turn in world space (around the vertical, then the sideways axis), carried into the head's own frame.
+    beforeTurn.copy(headBone.quaternion); turned=true;
+    turn.setFromEuler(turnAxis.set(-gazeNow.y*.18,gazeNow.x*.32,0,'YXZ'));
+    headBone.parent.getWorldQuaternion(parentTurn);
+    headBone.quaternion.premultiply(parentTurn.clone().invert().multiply(turn).multiply(parentTurn));
+  }
   // While the skull cap is lifted the head and its cap copy are cut by different planes; each draw selects its own,
   // and the slot glow follows (with both planes equal, the glow sits on that single cut edge).
   const caps: THREE.SkinnedMesh[] = [], pendingCaps: [THREE.Mesh, THREE.SkinnedMesh][] = [];
@@ -297,7 +325,8 @@ export function mountKelly(host: HTMLElement, options: ViewOptions) {
   capMaterial.customProgramCacheKey=()=>'kelly-cap';
   let capSynced='';
   let disposed=false, frame=0, size: THREE.Vector3 | undefined, lastTime=0, mixer: THREE.AnimationMixer | undefined, topBleed=0;
-  let lastState: ConversationState='idle', listenTimer=3, sinceYawn=0, idleFor=0, idleYawnAfter=firstIdleYawn, tiltRelease=0, glanceIn=glanceEvery(), viewShift=0, viewShiftX=0;
+  // A page that opens with her already awake (the landing) starts awake, without the waking-up clip.
+  let lastState: ConversationState=options.getState(), listenTimer=3, sinceYawn=0, idleFor=0, idleYawnAfter=firstIdleYawn, tiltRelease=0, glanceIn=glanceEvery(), viewShift=0, viewShiftX=0;
   let cuePlayback: AvatarPlayback | null=null, nextCue=0, previewState: ConversationState | null=null;
   const actions=new Map<string, THREE.AnimationAction>(), lip: Partial<Record<string, number>>={}, clipMorphs: number[][]=[];
   const reduced=matchMedia('(prefers-reduced-motion: reduce)');
@@ -475,7 +504,8 @@ export function mountKelly(host: HTMLElement, options: ViewOptions) {
     const state=previewState ?? options.getState();
     // The mixer only writes expressions when they change, so restore its last output before adding lip-sync and blinks.
     heads.forEach((mesh,i)=>{ const values=mesh.morphTargetInfluences; if (values) for (let j=0;j<values.length;j++) values[j]=clipMorphs[i]?.[j] ?? 0; });
-    direct(state,dt,playback,playing); mixer?.update(dt);
+    unfollow(); direct(state,dt,playback,playing); mixer?.update(dt);
+    follow(state,dt);
     heads.forEach((mesh,i)=>{ clipMorphs[i]=[...mesh.morphTargetInfluences ?? []]; });
     for (const name of mouthMorphs) {
       lip[name]=playing ? THREE.MathUtils.lerp(lip[name] ?? 0,pose[name] ?? 0,1-Math.exp(-dt*35)) : 0;
@@ -531,8 +561,8 @@ export function mountKelly(host: HTMLElement, options: ViewOptions) {
     memorySocket.onmessage=()=>void readMemoryCount();
     memorySocket.onclose=()=>{ if (!disposed) memoryRetry=setTimeout(watchMemories,5000); };
   }
-  watchMemories();
-  const load=options.loadModel ?? (async (signal: AbortSignal) => { const response=await fetch('/avatars/kelly.glb',{signal}); if(!response.ok) throw Error('Model unavailable'); return response.arrayBuffer(); });
+  if (options.memories===undefined) watchMemories(); else memoryCount=options.memories;
+  const load=options.loadModel ?? (async (signal: AbortSignal) => { const response=await fetch(`${import.meta.env.BASE_URL}avatars/kelly.glb`,{signal}); if(!response.ok) throw Error('Model unavailable'); return response.arrayBuffer(); });
   void load(controller.signal).then(bytes=>new GLTFLoader().setMeshoptDecoder(MeshoptDecoder).parseAsync(bytes,'')).then(gltf=>{
     if(disposed)return;
     const avatar=gltf.scene;
@@ -581,6 +611,7 @@ export function mountKelly(host: HTMLElement, options: ViewOptions) {
     if (floor) { bust.updateMatrixWorld(true); bounds.min.y=floor.getWorldPosition(new THREE.Vector3()).y; }
     size=bounds.getSize(new THREE.Vector3());
     bust.position.copy(bounds.getCenter(new THREE.Vector3())).negate(); stage.add(bust); stage.scale.setScalar(1.9/size.y);
+    headBone=avatar.getObjectByName('head') ?? undefined;
     crown=createCrown(stage,avatar.getObjectByName('head')!); applyLook(currentLook);
     if (memoryCount!==null) crown.setMemories(memoryCount);
     const ray=new THREE.Raycaster(), centre=new THREE.Vector3();

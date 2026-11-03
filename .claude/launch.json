@@ -9,6 +9,13 @@
       "url": "http://127.0.0.1:5173"
     },
     {
+      "name": "talk2urself-landing",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev:landing"],
+      "port": 5174,
+      "url": "http://127.0.0.1:5174"
+    },
+    {
       "name": "talk2urself-lan",
       "runtimeExecutable": "npm",
       "runtimeArgs": ["run", "dev:lan"],

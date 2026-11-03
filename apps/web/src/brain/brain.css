@@ -75,3 +75,9 @@
   .brain-subjects li { flex: none; }
 }
 @media (prefers-reduced-motion: reduce) { .brain-view, .brain-view.closing, .brain-view .brain-scene, .brain-view.closing .brain-scene { animation: none; } }
+/* Inside a page (the landing): no veil, no rising from Kelly's head, it simply fills its box. */
+.brain-view.embedded { position: absolute; z-index: auto; background: none; -webkit-backdrop-filter: none; backdrop-filter: none; animation: none; }
+.brain-view.embedded .brain-scene, .brain-view.embedded .brain-header, .brain-view.embedded .brain-footer { animation: none; }
+.brain-view.embedded .brain-scene canvas { mix-blend-mode: normal; }
+/* On the landing a vertical swipe over the brain scrolls the page; a sideways one turns the brain. */
+.brain-view.embedded .brain-scene canvas { touch-action: pan-y; }
